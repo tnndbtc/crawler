@@ -1,0 +1,128 @@
+[
+  {
+    "model": "crawler_admin.translationsettings",
+    "pk": 1,
+    "fields": {
+      "translation_enabled": true,
+      "default_provider": "deepl",
+      "canonical_locale_for_analysis": "en-US",
+      "force_canonical_translation": true,
+      "enabled_locales": [],
+      "max_chars_per_request": 5000
+    }
+  },
+  {
+    "model": "crawler_admin.region",
+    "pk": 1,
+    "fields": {
+      "key": "us",
+      "name": "United States",
+      "default_locale": "en-US",
+      "enabled": true
+    }
+  },
+  {
+    "model": "crawler_admin.region",
+    "pk": 2,
+    "fields": {
+      "key": "jp",
+      "name": "Japan",
+      "default_locale": "ja-JP",
+      "enabled": true
+    }
+  },
+  {
+    "model": "crawler_admin.region",
+    "pk": 3,
+    "fields": {
+      "key": "kr",
+      "name": "South Korea",
+      "default_locale": "ko-KR",
+      "enabled": true
+    }
+  },
+  {
+    "model": "crawler_admin.region",
+    "pk": 4,
+    "fields": {
+      "key": "cn",
+      "name": "China",
+      "default_locale": "zh-Hans",
+      "enabled": true
+    }
+  },
+  {
+    "model": "crawler_admin.trendsurface",
+    "pk": 1,
+    "fields": {
+      "region": 1,
+      "key": "reddit_hot",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.5,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 100,
+      "config_json": {
+        "subreddit": "all",
+        "limit": 100
+      },
+      "last_cursor": null,
+      "last_run_at": null,
+      "last_success_at": null,
+      "last_error": null,
+      "next_run_at": null
+    }
+  },
+  {
+    "model": "crawler_admin.trendsurface",
+    "pk": 2,
+    "fields": {
+      "region": 1,
+      "key": "youtube_trending",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "category_entertainment",
+      "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "category": "trending",
+        "region_code": "US"
+      },
+      "last_cursor": null,
+      "last_run_at": null,
+      "last_success_at": null,
+      "last_error": null,
+      "next_run_at": null
+    }
+  },
+  {
+    "model": "crawler_admin.trendsurface",
+    "pk": 3,
+    "fields": {
+      "region": 2,
+      "key": "yahoo_jp_ranking",
+      "platform": "yahoo_japan",
+      "surface_type": "ranking",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.yahoo_jp_ranking:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 20,
+      "config_json": {
+        "category": "all"
+      },
+      "last_cursor": null,
+      "last_run_at": null,
+      "last_success_at": null,
+      "last_error": null,
+      "next_run_at": null
+    }
+  }
+]
