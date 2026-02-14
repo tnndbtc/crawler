@@ -702,7 +702,29 @@ reset_database() {
     print_header "Reset Database"
 
     echo ""
-    confirm_action "This will DELETE the database and recreate it from scratch!" || return 1
+    print_error "⚠️  WARNING: This will DELETE the database and recreate it from scratch!"
+    echo ""
+    echo -e "${BOLD}This action will:${NC}"
+    echo "  • Delete all collected trend data"
+    echo "  • Delete all CrawlRun history"
+    echo "  • Delete all translation data"
+    echo "  • Remove all surface configurations"
+    echo "  • Remove all admin users"
+    echo ""
+    print_warning "A backup will be created before deletion."
+    echo ""
+    echo -e "${BOLD}${RED}Type 'yes' to confirm and press Enter (or anything else to cancel):${NC}"
+    read -p "> " confirmation
+
+    if [ "$confirmation" != "yes" ]; then
+        print_info "Database reset cancelled"
+        echo ""
+        return 1
+    fi
+
+    echo ""
+    print_step "Confirmation received. Proceeding with database reset..."
+    echo ""
 
     # Backup current database
     if [ -f "$DB_FILE" ]; then
@@ -788,6 +810,174 @@ run_tests() {
 }
 
 ################################################################################
+# Force Collection Run
+################################################################################
+
+force_collection_run() {
+    print_header "Force Collection Run"
+
+    # Check if database exists
+    if [ ! -f "$DB_FILE" ]; then
+        print_error "Database not found"
+        print_info "Run option 9 (First-Time Setup) first"
+        return 1
+    fi
+
+    # Check if surface worker is running
+    if ! is_service_running "surface_worker"; then
+        print_error "Surface worker is NOT running!"
+        print_info "Start it first with option 2 (Start All Services)"
+        echo ""
+        return 1
+    fi
+
+    print_info "This will trigger immediate collection for all enabled surfaces"
+    print_info "and monitor progress in real-time."
+    echo ""
+
+    cd "$SCRIPT_DIR"
+
+    # Get list of enabled surfaces and trigger them
+    print_step "Step 1/3: Querying enabled surfaces..."
+
+    local surface_output=$(python3 manage.py shell -c "
+from crawler_admin.models import TrendSurface
+surfaces = TrendSurface.objects.filter(enabled=True).select_related('region')
+count = surfaces.count()
+
+if count == 0:
+    print('NONE')
+else:
+    for s in surfaces:
+        print(f'{s.region.key}/{s.key}')
+" 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError")
+
+    if [ "$surface_output" = "NONE" ]; then
+        print_warning "No enabled surfaces found"
+        echo ""
+        return 0
+    fi
+
+    # Count surfaces
+    local surface_count=$(echo "$surface_output" | wc -l)
+    print_success "Found $surface_count enabled surface(s):"
+    echo "$surface_output" | while read line; do
+        echo "  - $line"
+    done
+    echo ""
+
+    # Trigger collection by setting next_run_at to NULL
+    print_step "Step 2/3: Triggering collection..."
+
+    python3 manage.py shell -c "
+from crawler_admin.models import TrendSurface
+surfaces = TrendSurface.objects.filter(enabled=True)
+for s in surfaces:
+    s.next_run_at = None
+    s.save()
+" 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError" > /dev/null
+
+    print_success "Collection triggered - surfaces will be polled within 60 seconds"
+    echo ""
+
+    # Monitor progress
+    print_step "Step 3/3: Monitoring progress (waiting for collections to complete)..."
+    echo ""
+    print_info "Waiting for worker to pick up surfaces..."
+
+    # Wait a bit for worker to start
+    sleep 3
+
+    # Monitor CrawlRun records
+    local timeout=180  # 3 minutes max wait
+    local elapsed=0
+    local check_interval=3
+    local completed_count=0
+
+    # Create a timestamp marker
+    local start_time=$(date -u +"%Y-%m-%d %H:%M:%S")
+
+    while [ $elapsed -lt $timeout ]; do
+        # Check for new CrawlRun records
+        local status_output=$(python3 manage.py shell -c "
+from crawler_admin.models import CrawlRun, TrendSurface
+from django.utils import timezone
+from datetime import datetime
+
+# Get surfaces we're monitoring
+surfaces = list(TrendSurface.objects.filter(enabled=True).select_related('region'))
+surface_ids = [s.id for s in surfaces]
+
+# Get recent runs for these surfaces (since trigger time)
+start_time = datetime.fromisoformat('$start_time'.replace(' ', 'T') + '+00:00')
+recent_runs = CrawlRun.objects.filter(
+    surface_id__in=surface_ids,
+    created_at__gte=start_time
+).select_related('surface', 'surface__region').order_by('created_at')
+
+completed = []
+for run in recent_runs:
+    surface_name = f'{run.surface.region.key}/{run.surface.key}'
+    status = '✅' if run.status == 'success' else '❌'
+    completed.append(f'{status}|{surface_name}|{run.fetched_count}|{run.stored_new_count}|{run.deduped_count}|{run.duration_ms}|{run.status}')
+
+if completed:
+    for c in completed:
+        print(c)
+else:
+    print('WAITING')
+" 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError")
+
+        # Check if we got results
+        if [ "$status_output" != "WAITING" ] && [ ! -z "$status_output" ]; then
+            # Clear previous output and show results
+            echo -e "\r\033[K${BOLD}Collection Results:${NC}"
+            echo ""
+
+            completed_count=$(echo "$status_output" | wc -l)
+
+            echo "$status_output" | while IFS='|' read -r emoji surface_name fetched stored deduped duration status; do
+                echo -e "  $emoji ${BOLD}$surface_name${NC}"
+                echo "     Fetched: $fetched items | Stored new: $stored | Deduped: $deduped"
+                echo "     Duration: ${duration}ms | Status: $status"
+                echo ""
+            done
+
+            # Check if all surfaces completed
+            if [ "$completed_count" -ge "$surface_count" ]; then
+                print_success "All $surface_count surface(s) completed collection!"
+                break
+            fi
+        else
+            # Show waiting indicator
+            local dots=$((elapsed / check_interval % 4))
+            local dot_string=""
+            for i in $(seq 1 $dots); do
+                dot_string="${dot_string}."
+            done
+            echo -ne "\r  Waiting for collections to complete${dot_string}   "
+        fi
+
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    echo ""
+
+    # Timeout check
+    if [ $elapsed -ge $timeout ]; then
+        echo ""
+        print_warning "Monitoring timeout reached (${timeout}s)"
+        print_info "Collections may still be running. Check logs:"
+        print_info "  tail -f $LOG_DIR/surface_worker.log"
+    fi
+
+    echo ""
+    print_info "Collection run complete. Check Django Admin for detailed results."
+    echo ""
+}
+
+################################################################################
 # Quick Start
 ################################################################################
 
@@ -846,27 +1036,28 @@ EOF
     echo "  3)  Stop All Services"
     echo "  4)  Restart All Services"
     echo "  5)  Show Service Status"
+    echo "  6)  Force Collection Run (All Surfaces)"
     echo ""
 
     echo -e "${BOLD}Information & Monitoring:${NC}"
-    echo "  6)  Show Access URLs"
-    echo "  7)  View Logs (interactive)"
+    echo "  7)  Show Access URLs"
+    echo "  8)  View Logs (interactive)"
     echo ""
 
     echo -e "${BOLD}Setup & Maintenance:${NC}"
-    echo "  8)  First-Time Setup"
-    echo "  9)  Check System Requirements"
-    echo "  10) Update Dependencies"
+    echo "  9)  First-Time Setup"
+    echo "  10) Check System Requirements"
+    echo "  11) Update Dependencies"
     echo ""
 
     echo -e "${BOLD}Database Operations:${NC}"
-    echo "  11) Backup Database"
-    echo "  12) Restore Database"
-    echo "  13) Reset Database (destructive!)"
+    echo "  12) Backup Database"
+    echo "  13) Restore Database"
+    echo "  14) Reset Database (destructive!)"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
-    echo "  14) Run Tests"
+    echo "  15) Run Tests"
     echo ""
 
     echo "  0)  Exit"
@@ -885,15 +1076,16 @@ main_loop() {
             3) stop_all_services ;;
             4) restart_all_services ;;
             5) show_service_status ;;
-            6) show_urls ;;
-            7) view_logs ;;
-            8) first_time_setup ;;
-            9) check_requirements ;;
-            10) update_dependencies ;;
-            11) backup_database ;;
-            12) restore_database ;;
-            13) reset_database ;;
-            14) run_tests ;;
+            6) force_collection_run ;;
+            7) show_urls ;;
+            8) view_logs ;;
+            9) first_time_setup ;;
+            10) check_requirements ;;
+            11) update_dependencies ;;
+            12) backup_database ;;
+            13) restore_database ;;
+            14) reset_database ;;
+            15) run_tests ;;
             0)
                 echo ""
                 print_info "Exiting..."

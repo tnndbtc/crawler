@@ -17,6 +17,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,23 @@ app = FastAPI(
     title="Culture-Flexible Trend Crawler API",
     description="Read-only API for trend data consumption",
     version="1.0.0"
+)
+
+# ============================================================================
+# CORS Middleware
+# ============================================================================
+
+# Allow cross-origin requests from the UI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://192.168.86.41:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
