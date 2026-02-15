@@ -1,0 +1,157 @@
+================================================================================
+  CULTURE-FLEXIBLE TREND CRAWLER - HOW IT WORKS
+================================================================================
+
+This document explains the crawler's operation strategy in simple terms.
+
+================================================================================
+🕐 HOW OFTEN DOES THE CRAWLER RUN?
+================================================================================
+
+Two-Layer Timing Control:
+
+1. Main Worker Process Check Frequency
+   ─────────────────────────────────────
+   • Checks every 60 SECONDS to see which sources are due for collection
+   • Configurable via SURFACE_WORKER_POLL_INTERVAL environment variable
+
+2. Per-Source Collection Intervals (varies by source)
+   ───────────────────────────────────────────────────
+   Based on news update frequency, different collection intervals:
+
+   Source                          Interval        Description
+   ──────────────────────────────────────────────────────────────────────
+   Google News, Reuters            15 minutes      Fastest-updating sources
+   BBC, AP, Guardian, Al Jazeera   20 minutes      Major news sources
+   Hacker News                     20 minutes      Tech community news
+   Billboard, Variety, IGN         30 minutes      Entertainment & gaming
+   Polygon                         30 minutes      Gaming news
+   Wenxuecity, YouTube Trending    2 hours         Chinese news & video
+   Google Trends                   3 hours         Trend data (slow changes)
+   Twitter (disabled by default)   1 hour          Social media
+
+   ⚠  On Failure: System waits 5 minutes before retrying
+
+================================================================================
+📊 HOW MANY POSTS PER CRAWL?
+================================================================================
+
+Limit Strategy:
+   Each source has a max_items_per_run limit:
+
+   • Most news sources:  30-50 items
+   • Reddit:             Max 100 items (API hard limit)
+   • YouTube:            50 items
+   • Default cap:        200 items
+
+Why This Design?
+   1. Avoid Duplicates: News RSS/APIs return latest few dozen items;
+      already-collected items are auto-deduplicated
+
+   2. Protect Services: Prevents overwhelming target websites and
+      getting blocked
+
+   3. Timeliness First: Frequent small batches rather than
+      occasional large ones
+
+================================================================================
+🔄 WORKFLOW (SIMPLIFIED)
+================================================================================
+
+   1. Wake up every 60 seconds
+      ↓
+   2. Query database: Which sources are due?
+      • enabled = true (active status)
+      • next_run_at <= current time (or never run before)
+      ↓
+   3. Collect each source sequentially
+      • 60-second timeout per source
+      • Fetch → Parse → Deduplicate → Store
+      ↓
+   4. Update next run time
+      next_run_at = now + interval
+      ↓
+   5. Return to step 1
+
+================================================================================
+🛡️ DEDUPLICATION MECHANISM
+================================================================================
+
+Global Deduplication (not just recent items):
+
+   • Computes SHA-256 hash of "title + URL" for each article
+   • Checks database for existing hash before storing
+   • If exists → Skip (counted in deduped_count)
+   • If new → Store in database (counted in stored_new_count)
+
+Example:
+   1st run:  Fetched 50 items → Stored 45 new, 5 duplicates
+   2nd run:  Fetched 50 items → Stored 3 new, 47 already in database
+             (15 min later)
+
+================================================================================
+🌐 TRANSLATION STRATEGY (ASYNCHRONOUS)
+================================================================================
+
+   ✓ Translation NEVER blocks collection! It's an independent process
+   ✓ Translation worker checks every 30 seconds
+   ✓ Auto-translates non-English content to English (en-US)
+   ✓ Uses DeepL API (your DEEPL_API_KEY is for this)
+
+================================================================================
+⚙️ CONFIGURABLE SETTINGS
+================================================================================
+
+Via Environment Variables (.env file):
+   ──────────────────────────────────────────────────────────────────
+   SURFACE_WORKER_POLL_INTERVAL    Main loop interval (default: 60s)
+   MAX_RUN_SECONDS                 Per-source timeout (default: 60s)
+   DRY_RUN                         Test mode (collect but don't store)
+   TRANSLATION_WORKER_POLL_INTERVAL Translation check interval (default: 30s)
+   DEEPL_API_KEY                   DeepL translation API key
+   OPENAI_API_KEY                  OpenAI fallback translation key
+
+Via Django Admin (Database):
+   ──────────────────────────────────────────────────────────────────
+   • Collection interval per source (poll_interval_seconds)
+   • Max items per source (max_items_per_run)
+   • Enable/disable individual sources (enabled checkbox)
+   • Source-specific parameters (config_json field)
+   • Bucket categorization for content diversity
+
+================================================================================
+📝 SUMMARY
+================================================================================
+
+In Simple Terms:
+
+   1. System checks every minute which sources are due
+
+   2. Different intervals per source: from 15 minutes to 3 hours
+
+   3. Collects 30-100 items of latest content each time
+
+   4. Auto-deduplicates, only stores new articles
+
+   5. Translation runs in background, doesn't slow down collection
+
+This is a "high-frequency, small-batch" strategy prioritizing news
+timeliness! 🚀
+
+================================================================================
+💡 MONITORING YOUR CRAWLER
+================================================================================
+
+Check what's happening:
+   • View service status:        ./setup.sh (option 5)
+   • Force immediate collection:  ./setup.sh (option 6)
+   • View real-time logs:         ./setup.sh (option 8)
+   • Check Django Admin:          http://localhost:8001/admin
+
+Each CrawlRun record shows:
+   • fetched_count:     How many items the API returned
+   • stored_new_count:  How many were new and stored
+   • deduped_count:     How many were duplicates (skipped)
+   • duration_ms:       How long the collection took
+
+================================================================================

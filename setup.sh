@@ -542,6 +542,30 @@ show_urls() {
 }
 
 ################################################################################
+# How It Works - Crawler Explanation
+################################################################################
+
+show_how_it_works() {
+    print_header "How the Crawler Works"
+
+    local doc_file="${SCRIPT_DIR}/docs/HOW-IT-WORKS.txt"
+
+    if [ ! -f "$doc_file" ]; then
+        print_error "Documentation file not found: $doc_file"
+        return 1
+    fi
+
+    # Display with less if available (allows scrolling), otherwise cat
+    if command -v less &> /dev/null; then
+        less -R "$doc_file"
+    else
+        cat "$doc_file"
+        echo ""
+        read -p "Press Enter to continue..." -r
+    fi
+}
+
+################################################################################
 # Log Viewer
 ################################################################################
 
@@ -1106,26 +1130,27 @@ EOF
     echo -e "${BOLD}Information & Monitoring:${NC}"
     echo "  7)  Show Access URLs"
     echo "  8)  View Logs (interactive)"
+    echo "  9)  How It Works - Crawler Explanation"
     echo ""
 
     echo -e "${BOLD}Setup & Maintenance:${NC}"
-    echo "  9)  First-Time Setup"
-    echo "  10) Check System Requirements"
-    echo "  11) Update Dependencies"
+    echo "  10) First-Time Setup"
+    echo "  11) Check System Requirements"
+    echo "  12) Update Dependencies"
     echo ""
 
     echo -e "${BOLD}Database Operations:${NC}"
-    echo "  12) Backup Database"
-    echo "  13) Restore Database"
-    echo "  14) Reset Database (destructive!)"
+    echo "  13) Backup Database"
+    echo "  14) Restore Database"
+    echo "  15) Reset Database (destructive!)"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
-    echo "  15) Run Tests"
+    echo "  16) Run Tests"
     echo ""
 
     echo -e "${BOLD}Migration:${NC}"
-    echo "  16) Setup Migrated Collectors (15 new sources)"
+    echo "  17) Setup Migrated Collectors (15 new sources)"
     echo ""
 
     echo "  0)  Exit"
@@ -1147,14 +1172,15 @@ main_loop() {
             6) force_collection_run ;;
             7) show_urls ;;
             8) view_logs ;;
-            9) first_time_setup ;;
-            10) check_requirements ;;
-            11) update_dependencies ;;
-            12) backup_database ;;
-            13) restore_database ;;
-            14) reset_database ;;
-            15) run_tests ;;
-            16) setup_migrated_collectors ;;
+            9) show_how_it_works ;;
+            10) first_time_setup ;;
+            11) check_requirements ;;
+            12) update_dependencies ;;
+            13) backup_database ;;
+            14) restore_database ;;
+            15) reset_database ;;
+            16) run_tests ;;
+            17) setup_migrated_collectors ;;
             0)
                 echo ""
                 print_info "Exiting..."
@@ -1212,8 +1238,11 @@ if [ $# -gt 0 ]; then
         migrate)
             setup_migrated_collectors
             ;;
+        info|how-it-works)
+            show_how_it_works
+            ;;
         *)
-            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate]"
+            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate|info]"
             echo "Or run without arguments for interactive menu"
             exit 1
             ;;
