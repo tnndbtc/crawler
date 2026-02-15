@@ -1015,6 +1015,70 @@ quick_start() {
 }
 
 ################################################################################
+# Setup Migrated Collectors
+################################################################################
+
+setup_migrated_collectors() {
+    print_header "Setup Migrated Collectors"
+
+    # Check if database exists
+    if [ ! -f "$DB_FILE" ]; then
+        print_error "Database not found"
+        print_info "Run option 9 (First-Time Setup) first"
+        return 1
+    fi
+
+    echo ""
+    print_info "This will automatically configure 14 new collector sources:"
+    echo ""
+    echo "  News Sources (10):"
+    echo "    • BBC, Google News, Reuters, AP, Guardian, Al Jazeera"
+    echo "    • Billboard, Variety, IGN, Polygon"
+    echo ""
+    echo "  Social Media (4):"
+    echo "    • Hacker News, Google Trends"
+    echo "    • YouTube (enhanced), Twitter (placeholder)"
+    echo ""
+    print_warning "This is idempotent - safe to run multiple times"
+    echo ""
+
+    confirm_action "Continue with collector setup?" || return 1
+
+    echo ""
+    print_step "Running setup command..."
+    echo ""
+
+    cd "$SCRIPT_DIR"
+
+    # Run the Django management command
+    python3 manage.py setup_migrated_collectors
+
+    local exit_code=$?
+
+    if [ $exit_code -eq 0 ]; then
+        echo ""
+        print_success "Collectors configured successfully!"
+        echo ""
+
+        # Ask about restarting services
+        print_info "Services should be restarted to load new collectors"
+        read -p "Restart services now? (Y/n): " -n 1 -r
+        echo
+
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            restart_all_services
+        else
+            print_info "Remember to restart services later: ./setup.sh restart"
+        fi
+    else
+        print_error "Setup failed. Check errors above."
+        return 1
+    fi
+
+    echo ""
+}
+
+################################################################################
 # Main Menu
 ################################################################################
 
@@ -1060,6 +1124,10 @@ EOF
     echo "  15) Run Tests"
     echo ""
 
+    echo -e "${BOLD}Migration:${NC}"
+    echo "  16) Setup Migrated Collectors (14 new sources)"
+    echo ""
+
     echo "  0)  Exit"
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
@@ -1086,6 +1154,7 @@ main_loop() {
             13) restore_database ;;
             14) reset_database ;;
             15) run_tests ;;
+            16) setup_migrated_collectors ;;
             0)
                 echo ""
                 print_info "Exiting..."
@@ -1140,8 +1209,11 @@ if [ $# -gt 0 ]; then
         backup)
             backup_database
             ;;
+        migrate)
+            setup_migrated_collectors
+            ;;
         *)
-            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup]"
+            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate]"
             echo "Or run without arguments for interactive menu"
             exit 1
             ;;

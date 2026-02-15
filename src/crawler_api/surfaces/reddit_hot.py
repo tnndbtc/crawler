@@ -4,6 +4,11 @@ Reddit Hot surface collector.
 Uses Reddit's public JSON API to fetch hot posts from subreddits.
 No authentication required for public subreddits.
 
+ENHANCED features (migrated from source project):
+- NSFW content filtering (over_18 posts are skipped)
+- Better URL determination (self posts use permalink, external links preserved)
+- Richer metadata (subreddit, is_self, post_hint, domain, gilded awards)
+
 Surface type: ranking
 Bucket: hot_now (major trending content)
 """
@@ -94,6 +99,12 @@ async def collect(
         if post_wrapper.get('kind') != 't3':
             continue
 
+        # ENHANCED: Filter NSFW content
+        is_nsfw = post.get('over_18', False)
+        if is_nsfw:
+            logger.debug(f"Filtering NSFW post: {post.get('id', 'unknown')}")
+            continue
+
         # Extract core fields
         post_id = post.get('id', '')
         title = post.get('title', 'Untitled')
@@ -103,8 +114,18 @@ async def collect(
         permalink = post.get('permalink', '')
         created_utc = post.get('created_utc', 0)
 
-        # Build URL
-        url = f"{REDDIT_BASE}{permalink}" if permalink else f"{REDDIT_BASE}/r/{subreddit_name}/comments/{post_id}"
+        # ENHANCED: Better URL determination logic
+        # For self posts or media posts, use Reddit permalink
+        # For external links, use the actual URL
+        is_self = post.get('is_self', False)
+        post_hint = post.get('post_hint', '')
+        post_url = post.get('url', '')
+
+        if is_self or post_hint in ['image', 'hosted:video', 'rich:video'] or \
+           'i.redd.it' in post_url or 'v.redd.it' in post_url:
+            url = f"{REDDIT_BASE}{permalink}"
+        else:
+            url = post_url if post_url else f"{REDDIT_BASE}{permalink}"
 
         # Convert created_utc to ISO8601
         published_at = None
@@ -130,6 +151,10 @@ async def collect(
         # Build description (selftext or None)
         description = selftext[:1000] if selftext else None
 
+        # ENHANCED: Extract additional metadata
+        domain = post.get('domain', '')
+        gilded = post.get('gilded', 0)  # Number of gold awards
+
         # Build collected item
         item: CollectedItem = {
             "external_id": post_id,
@@ -143,16 +168,28 @@ async def collect(
             "rank_position": rank,
 
             # CRITICAL: engagement_signals (from /tmp/t9)
+            # ENHANCED: Added gilded awards
             "engagement_signals": {
                 "upvotes": upvotes,
                 "score": score,  # Reddit's score (upvotes - downvotes)
                 "comments": num_comments,
                 "upvote_ratio": upvote_ratio,
+                "gilded": gilded,  # Number of gold awards
             },
 
             # CRITICAL: raw_payload (from /tmp/t9)
-            # Store complete post data
-            "raw_payload": post,
+            # ENHANCED: Store complete post data with extra metadata
+            "raw_payload": {
+                **post,
+                # Extra metadata for easy access
+                "_metadata": {
+                    "subreddit": subreddit_name,
+                    "is_self": is_self,
+                    "post_hint": post_hint,
+                    "domain": domain,
+                    "author": author,
+                }
+            },
         }
         items.append(item)
 
