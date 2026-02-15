@@ -1029,11 +1029,11 @@ setup_migrated_collectors() {
     fi
 
     echo ""
-    print_info "This will automatically configure 14 new collector sources:"
+    print_info "This will automatically configure 15 new collector sources:"
     echo ""
-    echo "  News Sources (10):"
+    echo "  News Sources (11):"
     echo "    • BBC, Google News, Reuters, AP, Guardian, Al Jazeera"
-    echo "    • Billboard, Variety, IGN, Polygon"
+    echo "    • Wenxuecity (文学城), Billboard, Variety, IGN, Polygon"
     echo ""
     echo "  Social Media (4):"
     echo "    • Hacker News, Google Trends"
@@ -1125,7 +1125,7 @@ EOF
     echo ""
 
     echo -e "${BOLD}Migration:${NC}"
-    echo "  16) Setup Migrated Collectors (14 new sources)"
+    echo "  16) Setup Migrated Collectors (15 new sources)"
     echo ""
 
     echo "  0)  Exit"

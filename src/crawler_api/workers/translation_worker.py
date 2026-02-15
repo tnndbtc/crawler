@@ -68,8 +68,8 @@ async def create_missing_canonical_translations():
     # - original_locale != en-US (non-English items)
     # - No existing en-US translation
     items_needing_translation = await sync_to_async(list)(
-        TrendItem.objects.filter(
-            original_locale__ne=canonical_locale
+        TrendItem.objects.exclude(
+            original_locale=canonical_locale
         ).exclude(
             translations__locale=canonical_locale
         )[:100]  # Batch size

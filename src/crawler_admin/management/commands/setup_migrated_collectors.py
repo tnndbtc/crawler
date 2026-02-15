@@ -14,7 +14,7 @@ from crawler_admin.models import Region, TrendSurface
 
 
 class Command(BaseCommand):
-    help = 'Setup 14 migrated collectors from source project'
+    help = 'Setup 15 migrated collectors from source project'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -236,6 +236,20 @@ class Command(BaseCommand):
                 'poll_interval_seconds': 1200,  # 20 min
                 'max_items_per_run': 40,
                 'config_json': {'locale': 'en-US'},
+                '_category': 'news',
+            },
+            {
+                'region': region,
+                'key': 'wenxuecity_news',
+                'platform': 'wenxuecity',
+                'surface_type': 'news',
+                'bucket': 'region_local',
+                'bucket_weight': 1.0,
+                'entrypoint': 'crawler_api.surfaces.wenxuecity_news:collect',
+                'enabled': True,
+                'poll_interval_seconds': 7200,  # 2 hours
+                'max_items_per_run': 40,
+                'config_json': {'locale': 'zh-Hans'},
                 '_category': 'news',
             },
             # Entertainment news

@@ -2,7 +2,7 @@
 
 ## What Was Done
 
-Successfully migrated **14 collector sources** from `/home/tnnd/data/code/trend` with **automated setup**.
+Successfully migrated **15 collector sources** from `/home/tnnd/data/code/trend` with **automated setup**.
 
 ---
 
@@ -13,9 +13,9 @@ Successfully migrated **14 collector sources** from `/home/tnnd/data/code/trend`
 - ✅ `src/crawler_api/surfaces/base_rss.py` - Reusable RSS collector base
 - ✅ `src/crawler_admin/management/commands/setup_migrated_collectors.py` - **Automated setup command**
 
-### News Collectors (10 files)
+### News Collectors (11 files)
 - ✅ `bbc_news.py`, `google_news.py`, `reuters_news.py`, `ap_news.py`
-- ✅ `guardian_news.py`, `aljazeera_news.py`
+- ✅ `guardian_news.py`, `aljazeera_news.py`, `wenxuecity_news.py`
 - ✅ `billboard_news.py`, `variety_news.py`
 - ✅ `ign_news.py`, `polygon_news.py`
 
@@ -41,7 +41,7 @@ Successfully migrated **14 collector sources** from `/home/tnnd/data/code/trend`
 ```
 
 This automatically:
-1. Creates all 14 TrendSurface records in database
+1. Creates all 15 TrendSurface records in database
 2. Configures proper buckets, intervals, and settings
 3. Shows summary of what was created
 4. Asks if you want to restart services
@@ -50,7 +50,7 @@ This automatically:
 
 ```bash
 ./setup.sh
-# Select: 16) Setup Migrated Collectors (14 new sources)
+# Select: 16) Setup Migrated Collectors (15 new sources)
 ```
 
 ### Verify Setup
@@ -62,7 +62,7 @@ http://localhost:8001/admin/crawler_admin/trendsurface/
 
 You should see:
 - **Existing**: reddit_hot, youtube_trending, yahoo_jp_ranking
-- **New**: All 14 migrated collectors (bbc_news, hackernews, google_trends, etc.)
+- **New**: All 15 migrated collectors (bbc_news, wenxuecity_news, hackernews, google_trends, etc.)
 
 ---
 
@@ -70,7 +70,7 @@ You should see:
 
 | Category | Count | Collectors | Bucket |
 |----------|-------|------------|--------|
-| **News - General** | 6 | BBC, Google News, Reuters, AP, Guardian, Al Jazeera | region_local |
+| **News - General** | 7 | BBC, Google News, Reuters, AP, Guardian, Al Jazeera, Wenxuecity | region_local |
 | **News - Entertainment** | 2 | Billboard, Variety | category_entertainment |
 | **News - Gaming** | 2 | IGN, Polygon | category_gaming |
 | **Social - Tech** | 1 | Hacker News | category_tech |
@@ -78,7 +78,7 @@ You should see:
 | **Social - Video** | 1 | YouTube (enhanced) | category_entertainment |
 | **Social - Twitter** | 1 | Twitter (placeholder) | rising |
 
-**Total**: 14 collectors
+**Total**: 15 collectors
 
 ---
 
@@ -146,7 +146,7 @@ echo "TWITTER_BEARER_TOKEN=your_token_here" >> .env
 
 ## ✅ Completion Checklist
 
-- [x] Code files created (14 collectors)
+- [x] Code files created (15 collectors)
 - [x] Automated setup command created
 - [x] Integrated into setup.sh (Option 16)
 - [x] Documentation complete
@@ -173,7 +173,7 @@ echo "TWITTER_BEARER_TOKEN=your_token_here" >> .env
 The migration is **code-complete** and ready to use!
 
 **What you have:**
-- ✅ 14 working collectors ready to run
+- ✅ 15 working collectors ready to run
 - ✅ 1 command to configure everything: `./setup.sh migrate`
 - ✅ Integrated into your existing setup.sh workflow
 - ✅ Enhanced existing collectors (Reddit, YouTube)
@@ -182,7 +182,7 @@ The migration is **code-complete** and ready to use!
 **What you need to do:**
 1. Run `./setup.sh migrate`
 2. Run `./setup.sh restart`
-3. Enjoy your 14 new trend sources!
+3. Enjoy your 15 new trend sources!
 
 **Optional:**
 - Add Twitter API key when ready (collector is prepared but disabled)
