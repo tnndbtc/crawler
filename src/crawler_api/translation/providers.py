@@ -224,7 +224,19 @@ class DeepLTranslationProvider:
         # Initialize the official DeepL SDK client
         self._client = deepl.DeepLClient(self.api_key)
 
-        logger.info("Initialized DeepL translation provider (using official SDK)")
+        # Diagnostic logging for API key and endpoint
+        key_prefix = self.api_key[:8] if len(self.api_key) >= 12 else "***"
+        key_suffix = self.api_key[-4:] if len(self.api_key) >= 12 else "***"
+        is_free_api = self.api_key.endswith(":fx")
+        api_type = "Free" if is_free_api else "Pro"
+        expected_endpoint = "https://api-free.deepl.com" if is_free_api else "https://api.deepl.com"
+
+        logger.info(
+            f"Initialized DeepL translation provider (using official SDK) | "
+            f"API Key: {key_prefix}...{key_suffix} | "
+            f"Type: {api_type} | "
+            f"Expected endpoint: {expected_endpoint}"
+        )
 
     async def translate(
         self,
@@ -270,13 +282,32 @@ class DeepLTranslationProvider:
             )
             return result.text.strip()
         except deepl.QuotaExceededException as e:
-            logger.error(f"DeepL quota exceeded: {e}")
+            logger.error(
+                f"DeepL quota exceeded: {e} | "
+                f"API Key: {self.api_key[:8]}...{self.api_key[-4:]} | "
+                f"Language pair: {source_locale} ({source_lang}) → {target_locale} ({target_lang})"
+            )
             raise DeepLQuotaExceededError(f"DeepL API quota exceeded: {e}") from e
         except deepl.DeepLException as e:
-            logger.error(f"DeepL API error: {e}")
+            # Get error details from the exception
+            error_msg = str(e)
+            is_auth_error = "auth" in error_msg.lower() or "forbidden" in error_msg.lower()
+
+            logger.error(
+                f"DeepL API error: {error_msg} | "
+                f"API Key: {self.api_key[:8]}...{self.api_key[-4:]} | "
+                f"Type: {'Free' if self.api_key.endswith(':fx') else 'Pro'} | "
+                f"Language pair: {source_locale} ({source_lang}) → {target_locale} ({target_lang}) | "
+                f"Text length: {len(text)} chars | "
+                f"Auth error: {is_auth_error}"
+            )
             raise TranslationError(f"DeepL API error: {e}") from e
         except Exception as e:
-            logger.error(f"DeepL translation failed: {e}")
+            logger.error(
+                f"DeepL translation failed: {e} | "
+                f"Language pair: {source_locale} ({source_lang}) → {target_locale} ({target_lang}) | "
+                f"Text length: {len(text)} chars"
+            )
             raise TranslationError(f"DeepL translation failed: {e}") from e
 
     def _map_locale_source(self, locale: str) -> str:

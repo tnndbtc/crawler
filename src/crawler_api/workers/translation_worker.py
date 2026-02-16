@@ -91,12 +91,20 @@ async def create_missing_canonical_translations():
                 provider=settings.default_provider
             )
             created_count += 1
+            logger.debug(
+                f"Created pending translation: item #{item.id} "
+                f"{item.original_locale} → {canonical_locale} | "
+                f"Provider: {settings.default_provider}"
+            )
         except django.db.utils.IntegrityError:
             # Already exists (race condition)
             continue
 
     if created_count > 0:
-        logger.info(f"Created {created_count} pending canonical translation(s)")
+        logger.info(
+            f"Created {created_count} pending canonical translation(s) "
+            f"with provider={settings.default_provider}"
+        )
 
     return created_count
 
@@ -147,12 +155,20 @@ async def create_missing_additional_locale_translations():
                     provider=settings.default_provider
                 )
                 created_count += 1
+                logger.debug(
+                    f"Created pending translation: item #{item.id} "
+                    f"{item.original_locale} → {target_locale} | "
+                    f"Provider: {settings.default_provider}"
+                )
             except django.db.utils.IntegrityError:
                 # Already exists (race condition)
                 continue
 
         if created_count > 0:
-            logger.info(f"Created {created_count} pending {target_locale} translation(s)")
+            logger.info(
+                f"Created {created_count} pending {target_locale} translation(s) "
+                f"with provider={settings.default_provider}"
+            )
             total_created += created_count
 
     return total_created
@@ -200,6 +216,11 @@ async def process_pending_translations(batch_size: int = 10):
 
             # Get provider
             provider_name = translation.provider or settings.default_provider
+            logger.info(
+                f"📝 Processing item #{translation.item.id}: "
+                f"{translation.item.original_locale} → {translation.locale} | "
+                f"Provider: {provider_name}"
+            )
             provider = get_provider(provider_name)
 
             # Extract text to translate
@@ -337,6 +358,52 @@ async def process_pending_translations(batch_size: int = 10):
     return processed_count
 
 
+async def test_deepl_connectivity():
+    """
+    Test DeepL API connectivity on startup.
+
+    Attempts a simple translation to verify:
+    - API key is valid
+    - Endpoint is reachable
+    - Account has quota available
+    """
+    try:
+        logger.info("🔍 Testing DeepL API connectivity...")
+
+        settings = await sync_to_async(TranslationSettings.get_settings)()
+        if settings.default_provider != 'deepl':
+            logger.info(f"Default provider is '{settings.default_provider}', skipping DeepL test")
+            return
+
+        provider = get_provider('deepl')
+
+        # Simple test translation: "Hello" from English to Spanish
+        result = await provider.translate(
+            text="Hello",
+            source_locale="en-US",
+            target_locale="es-ES"
+        )
+
+        logger.info(f"✅ DeepL API test successful! Test translation result: '{result}'")
+
+        # Try to get usage stats if available
+        if hasattr(provider, 'get_usage'):
+            usage = await provider.get_usage()
+            if usage:
+                logger.info(
+                    f"📊 DeepL usage stats: {usage.character.count}/{usage.character.limit} "
+                    f"characters used ({usage.character.count / usage.character.limit * 100:.1f}%)"
+                )
+
+    except Exception as e:
+        logger.error(
+            f"❌ DeepL API connectivity test FAILED: {e}\n"
+            f"   Translation worker will continue, but DeepL translations will fail!\n"
+            f"   Check your DEEPL_API_KEY environment variable and account status.",
+            exc_info=True
+        )
+
+
 async def run_worker_loop():
     """
     Main worker loop.
@@ -350,6 +417,9 @@ async def run_worker_loop():
     """
     logger.info("Translation worker started")
     logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}")
+
+    # Test DeepL connectivity on startup
+    await test_deepl_connectivity()
 
     while True:
         try:

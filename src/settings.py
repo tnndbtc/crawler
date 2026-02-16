@@ -11,8 +11,9 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env file
+# override=False means real environment variables take precedence over .env file
+load_dotenv(override=False)
 
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
