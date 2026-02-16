@@ -34,7 +34,7 @@ from crawler_admin.models import (
     TrendItemTranslation,
     TranslationSettings
 )
-from crawler_api.translation.providers import get_provider
+from crawler_api.translation.providers import get_provider, TranslationError
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,12 @@ async def create_missing_canonical_translations():
     # Find items without canonical translation
     # - original_locale != en-US (non-English items)
     # - No existing en-US translation
+    # - SKIP English variants (en-GB, en-AU, etc.) - they don't need translation
     items_needing_translation = await sync_to_async(list)(
         TrendItem.objects.exclude(
             original_locale=canonical_locale
+        ).exclude(
+            original_locale__startswith='en-'  # Skip all English variants
         ).exclude(
             translations__locale=canonical_locale
         )[:100]  # Batch size
@@ -148,6 +151,23 @@ async def process_pending_translations(batch_size: int = 10):
             title = translation.item.title_original
             description = translation.item.description_original or ''
 
+            # Skip translation for English variants (en-GB, en-AU, etc. → en-US)
+            # Just copy the original text
+            if source_locale.startswith('en-') and target_locale.startswith('en-'):
+                logger.info(
+                    f"Skipping translation for English variant: {source_locale} → {target_locale} "
+                    f"(item #{translation.item.id}), using original text"
+                )
+                translation.title = title
+                translation.description = description
+                translation.status = 'complete'
+                translation.translated_at = timezone.now()
+                translation.provider = 'none'  # No translation needed
+                translation.error_message = None
+                await sync_to_async(translation.save)()
+                processed_count += 1
+                continue
+
             # Translate title (always)
             translated_title = await provider.translate(
                 text=title,
@@ -169,6 +189,7 @@ async def process_pending_translations(batch_size: int = 10):
             translation.description = translated_description
             translation.status = 'complete'
             translation.translated_at = timezone.now()
+            translation.provider = provider_name  # Record which provider was used
             translation.error_message = None
             await sync_to_async(translation.save)()
 
@@ -180,8 +201,70 @@ async def process_pending_translations(batch_size: int = 10):
 
             processed_count += 1
 
+        except TranslationError as e:
+            # Translation provider failed (DeepL quota, auth, API error, etc.)
+            # Fall back to argostranslate offline translation
+            logger.warning(
+                f"⚠️  Translation provider failed! Falling back to argostranslate offline translation. "
+                f"Provider: {provider_name}, Error: {e}"
+            )
+
+            try:
+                # Retry with argostranslate offline provider
+                logger.info(f"Retrying translation for item #{translation.item.id} with argostranslate provider...")
+                local_provider = get_provider("argostranslate")
+
+                # Extract text again (already have it from above)
+                source_locale = translation.item.original_locale
+                target_locale = translation.locale
+                title = translation.item.title_original
+                description = translation.item.description_original or ''
+
+                # Translate with argostranslate provider
+                translated_title = await local_provider.translate(
+                    text=title,
+                    source_locale=source_locale,
+                    target_locale=target_locale
+                )
+
+                translated_description = ''
+                if description:
+                    translated_description = await local_provider.translate(
+                        text=description,
+                        source_locale=source_locale,
+                        target_locale=target_locale
+                    )
+
+                # Success with argostranslate provider
+                translation.title = translated_title
+                translation.description = translated_description
+                translation.status = 'complete'
+                translation.translated_at = timezone.now()
+                translation.provider = 'argostranslate'  # Record that we used argostranslate fallback
+                translation.error_message = None
+                await sync_to_async(translation.save)()
+
+                logger.info(
+                    f"✓ Translated item #{translation.item.id} with argostranslate provider "
+                    f"{source_locale} → {target_locale} (fallback from {provider_name})"
+                )
+
+                processed_count += 1
+
+            except Exception as local_error:
+                # Argostranslate translation also failed
+                logger.error(
+                    f"Argostranslate translation fallback failed for item #{translation.item.id}: {local_error}"
+                )
+                # Mark as failed since both primary provider and argostranslate failed
+                translation.status = 'failed'
+                translation.error_message = f"{provider_name} failed ({e}), argostranslate fallback also failed: {local_error}"
+                await sync_to_async(translation.save)(
+                    update_fields=['status', 'error_message']
+                )
+
         except Exception as e:
-            # Translation failed
+            # Translation failed for other reasons
             error_msg = str(e)
             translation.status = 'failed'
             translation.error_message = error_msg

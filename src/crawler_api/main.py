@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 import django
 from asgiref.sync import sync_to_async
+from django.db.models import Q
 
 # Setup Django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -128,6 +129,21 @@ class TrendItemResponse(BaseModel):
     collected_at: datetime
 
 
+class PaginatedTrendResponse(BaseModel):
+    """
+    Paginated response for trend items.
+
+    Provides pagination metadata along with the item list.
+    """
+    items: List[TrendItemResponse]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+
+
 # ============================================================================
 # Basic Endpoints
 # ============================================================================
@@ -212,22 +228,29 @@ async def list_surfaces(
     ]
 
 
-@app.get("/api/v1/trends", response_model=List[TrendItemResponse])
+@app.get("/api/v1/trends", response_model=PaginatedTrendResponse)
 async def list_trends(
     region: Optional[str] = Query(None, description="Filter by region key"),
     bucket: Optional[str] = Query(None, description="Filter by bucket"),
-    limit: int = Query(100, ge=1, le=500, description="Max items to return")
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(50, ge=1, le=200, description="Items per page")
 ):
     """
-    Get trend items with canonical (English) translations.
+    Get trend items with canonical (English) translations (paginated).
 
     From REQUIREMENTS-MASTER.md:
-    - GET /api/v1/trends?region=xx&bucket=yy
+    - GET /api/v1/trends?region=xx&bucket=yy&page=1&page_size=50
     - Returns items with canonical_title (from /tmp/t4)
+    - Now includes pagination support
 
     Product constraint (from /tmp/t9):
     - rank_position is important metadata
     - engagement_signals show platform metrics
+
+    Pagination:
+    - page: Page number starting from 1
+    - page_size: Number of items per page (max 200)
+    - Returns paginated envelope with items and metadata
     """
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
         'translations'
@@ -239,7 +262,21 @@ async def list_trends(
     if bucket:
         queryset = queryset.filter(bucket=bucket)
 
-    items = await sync_to_async(list)(queryset[:limit])
+    # Filter: Only include items that are either originally English
+    # or have a completed en-US translation
+    queryset = queryset.filter(
+        Q(original_locale='en-US') |
+        Q(translations__locale='en-US', translations__status='complete')
+    ).distinct()
+
+    # Calculate pagination
+    offset = (page - 1) * page_size
+
+    # Get total count for pagination metadata
+    total_count = await sync_to_async(queryset.count)()
+
+    # Fetch paginated items
+    items = await sync_to_async(list)(queryset[offset:offset + page_size])
 
     results = []
     for item in items:
@@ -251,15 +288,13 @@ async def list_trends(
                 break
 
         # Use canonical if available, otherwise original
+        # Note: All items reaching this point are guaranteed to be either
+        # originally English or have a completed en-US translation (filtered at DB level)
         if canonical_translation:
             canonical_title = canonical_translation.title
             canonical_description = canonical_translation.description
-        elif item.original_locale == 'en-US':
-            # Original is already English
-            canonical_title = item.title_original
-            canonical_description = item.description_original
         else:
-            # No translation yet, use original
+            # Original is already English (no else case needed - filtered at DB)
             canonical_title = item.title_original
             canonical_description = item.description_original
 
@@ -282,7 +317,18 @@ async def list_trends(
             )
         )
 
-    return results
+    # Calculate pagination metadata
+    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+
+    return PaginatedTrendResponse(
+        items=results,
+        total_count=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+        has_next=page < total_pages,
+        has_previous=page > 1
+    )
 
 
 # ============================================================================
