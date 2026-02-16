@@ -13,6 +13,7 @@ Configuration is done via Django Admin.
 
 import os
 import sys
+import base64
 from typing import List, Optional
 from datetime import datetime
 
@@ -129,19 +130,15 @@ class TrendItemResponse(BaseModel):
     collected_at: datetime
 
 
-class PaginatedTrendResponse(BaseModel):
+class CursorTrendResponse(BaseModel):
     """
-    Paginated response for trend items.
+    Cursor-based paginated response for trend items.
 
-    Provides pagination metadata along with the item list.
+    Uses cursor pagination for infinite scroll support.
     """
     items: List[TrendItemResponse]
-    total_count: int
-    page: int
-    page_size: int
-    total_pages: int
-    has_next: bool
-    has_previous: bool
+    next_cursor: Optional[str] = None
+    has_more: bool
 
 
 # ============================================================================
@@ -228,33 +225,33 @@ async def list_surfaces(
     ]
 
 
-@app.get("/api/v1/trends", response_model=PaginatedTrendResponse)
+@app.get("/api/v1/trends", response_model=CursorTrendResponse)
 async def list_trends(
     region: Optional[str] = Query(None, description="Filter by region key"),
     bucket: Optional[str] = Query(None, description="Filter by bucket"),
-    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(50, ge=1, le=200, description="Items per page")
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: int = Query(50, ge=1, le=200, description="Number of items to return (hint)")
 ):
     """
-    Get trend items with canonical (English) translations (paginated).
+    Get trend items with canonical (English) translations (cursor-based pagination).
 
     From REQUIREMENTS-MASTER.md:
-    - GET /api/v1/trends?region=xx&bucket=yy&page=1&page_size=50
+    - GET /api/v1/trends?region=xx&bucket=yy&cursor=xxx&limit=50
     - Returns items with canonical_title (from /tmp/t4)
-    - Now includes pagination support
+    - Uses cursor-based pagination for infinite scroll
 
     Product constraint (from /tmp/t9):
     - rank_position is important metadata
     - engagement_signals show platform metrics
 
-    Pagination:
-    - page: Page number starting from 1
-    - page_size: Number of items per page (max 200)
-    - Returns paginated envelope with items and metadata
+    Cursor Pagination:
+    - cursor: Opaque cursor string (base64-encoded last item ID)
+    - limit: Number of items to return (max 200, hint only - backend may return fewer)
+    - Returns next_cursor for fetching more items
     """
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
         'translations'
-    ).order_by('-collected_at')
+    ).order_by('-collected_at', '-id')  # Secondary sort by ID for stability
 
     if region:
         queryset = queryset.filter(region__key=region)
@@ -269,14 +266,22 @@ async def list_trends(
         Q(translations__locale='en-US', translations__status='complete')
     ).distinct()
 
-    # Calculate pagination
-    offset = (page - 1) * page_size
+    # Apply cursor filter
+    if cursor:
+        try:
+            cursor_id = int(base64.b64decode(cursor).decode('utf-8'))
+            queryset = queryset.filter(id__lt=cursor_id)
+        except (ValueError, Exception):
+            # Invalid cursor, ignore it
+            pass
 
-    # Get total count for pagination metadata
-    total_count = await sync_to_async(queryset.count)()
+    # Fetch limit + 1 to check if there are more items
+    items = await sync_to_async(list)(queryset[:limit + 1])
 
-    # Fetch paginated items
-    items = await sync_to_async(list)(queryset[offset:offset + page_size])
+    # Check if there are more items
+    has_more = len(items) > limit
+    if has_more:
+        items = items[:limit]  # Trim to limit
 
     results = []
     for item in items:
@@ -317,17 +322,16 @@ async def list_trends(
             )
         )
 
-    # Calculate pagination metadata
-    total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+    # Generate next cursor
+    next_cursor = None
+    if has_more and items:
+        last_item_id = items[-1].id
+        next_cursor = base64.b64encode(str(last_item_id).encode('utf-8')).decode('utf-8')
 
-    return PaginatedTrendResponse(
+    return CursorTrendResponse(
         items=results,
-        total_count=total_count,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        has_next=page < total_pages,
-        has_previous=page > 1
+        next_cursor=next_cursor,
+        has_more=has_more
     )
 
 

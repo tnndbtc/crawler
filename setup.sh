@@ -485,7 +485,7 @@ show_service_status() {
 ################################################################################
 
 show_urls() {
-    print_header "Access URLs"
+    print_header "Trend Crawler API Documentation"
 
     # Detect local IP address
     local HOST_IP=$(hostname -I | awk '{print $1}')
@@ -502,6 +502,21 @@ show_urls() {
     fi
     echo ""
 
+    # Check if services are actually running
+    local services_running=false
+    if is_service_running "django_admin" || is_service_running "api_server"; then
+        services_running=true
+        print_success "Services are running - URLs are accessible"
+    else
+        print_warning "Services are not running - start them with option 2"
+    fi
+
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                        WEB INTERFACES                              ${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
     echo -e "${BOLD}Django Admin Interface:${NC}"
     echo -e "  ${CYAN}http://$HOST_IP:$DJANGO_PORT/admin${NC}"
     echo -e "  Configure regions, surfaces, and view collected data"
@@ -512,33 +527,173 @@ show_urls() {
     echo -e "  Main API endpoint"
     echo ""
 
-    echo -e "${BOLD}API Documentation:${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/docs${NC} (Swagger UI)"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/redoc${NC} (ReDoc)"
+    echo -e "${BOLD}Interactive API Documentation:${NC}"
+    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/docs${NC} (Swagger UI - Try APIs)"
+    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/redoc${NC} (ReDoc - Read-only)"
     echo ""
 
-    echo -e "${BOLD}Health & Monitoring:${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/health${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/api/v1/health/crawl${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/api/v1/health/translation${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                    API QUICK REFERENCE                             ${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    echo -e "${BOLD}Data Endpoints:${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/api/v1/regions${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/api/v1/surfaces${NC}"
-    echo -e "  ${CYAN}http://$HOST_IP:$API_PORT/api/v1/trends${NC}"
+    echo -e "${BOLD}Base URL:${NC} ${CYAN}http://$HOST_IP:$API_PORT/api/v1${NC}"
     echo ""
 
-    # Check if services are actually running
-    local services_running=false
-    if is_service_running "django_admin" || is_service_running "api_server"; then
-        services_running=true
-        print_success "Services are running - URLs should be accessible"
-    else
-        print_warning "Services are not running - start them with option 2"
-    fi
+    echo -e "${BOLD}━━━ Main Endpoints ━━━${NC}"
+    echo ""
+    echo -e "${BOLD}1. GET /trends${NC} - Get trend items (cursor-based pagination)"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/api/v1/trends?limit=50\"${NC}"
+    echo ""
+    echo "   Query Parameters:"
+    echo "     • cursor       - Pagination cursor (from previous response)"
+    echo "     • limit        - Items to return (1-200, default: 50)"
+    echo "     • region       - Filter by region key (us, jp, kr, etc.)"
+    echo "     • bucket       - Filter by bucket (hot_now, news, etc.)"
+    echo ""
+    echo "   Response:"
+    echo "     {"
+    echo "       \"items\": [...],"
+    echo "       \"next_cursor\": \"base64-string\","
+    echo "       \"has_more\": true"
+    echo "     }"
+    echo ""
+
+    echo -e "${BOLD}2. GET /regions${NC} - List available regions"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/api/v1/regions?enabled_only=true\"${NC}"
+    echo ""
+    echo "   Query Parameters:"
+    echo "     • enabled_only - Only show enabled regions (default: true)"
+    echo ""
+    echo "   Response:"
+    echo "     ["
+    echo "       {"
+    echo "         \"key\": \"us\","
+    echo "         \"name\": \"United States\","
+    echo "         \"default_locale\": \"en-US\","
+    echo "         \"enabled\": true"
+    echo "       }"
+    echo "     ]"
+    echo ""
+
+    echo -e "${BOLD}3. GET /surfaces${NC} - List trend sources"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/api/v1/surfaces?enabled_only=true&region=us\"${NC}"
+    echo ""
+    echo "   Query Parameters:"
+    echo "     • enabled_only - Only show enabled surfaces (default: true)"
+    echo "     • region       - Filter by region key"
+    echo ""
+    echo "   Response:"
+    echo "     ["
+    echo "       {"
+    echo "         \"id\": 1,"
+    echo "         \"region_key\": \"us\","
+    echo "         \"platform\": \"google_news\","
+    echo "         \"bucket\": \"hot_now\","
+    echo "         \"enabled\": true"
+    echo "       }"
+    echo "     ]"
+    echo ""
+
+    echo -e "${BOLD}━━━ Health & Monitoring ━━━${NC}"
+    echo ""
+    echo -e "${BOLD}4. GET /health${NC} - Basic health check"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/health\"${NC}"
+    echo ""
+
+    echo -e "${BOLD}5. GET /api/v1/health/crawl${NC} - Per-surface crawl status"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/api/v1/health/crawl\"${NC}"
+    echo ""
+
+    echo -e "${BOLD}6. GET /api/v1/health/translation${NC} - Translation queue status"
+    echo -e "   ${CYAN}curl \"http://$HOST_IP:$API_PORT/api/v1/health/translation\"${NC}"
+    echo ""
+
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                    TREND ITEM SCHEMA                               ${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    cat << 'EOF'
+{
+  "id": 5422,
+  "region_key": "us",
+  "platform": "google_news",
+  "bucket": "hot_now",
+
+  // Original content (native language)
+  "title_original": "Breaking News Title",
+  "description_original": "Description text...",
+  "original_locale": "en-US",
+  "url": "https://...",
+
+  // Canonical (English) content
+  "canonical_title": "Translated English Title",
+  "canonical_description": "Translated description...",
+
+  // Ranking & engagement
+  "rank_position": 1,
+  "engagement_signals": {
+    "views": 1500000,
+    "likes": 85000,
+    "comments": 2300
+  },
+
+  // Timestamps (ISO 8601)
+  "published_at": "2026-02-15T21:01:00Z",
+  "collected_at": "2026-02-16T02:55:27.319780Z"
+}
+EOF
 
     echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                    USAGE EXAMPLES                                  ${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 1: Get first page of trends${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/trends?limit=50\" | jq .${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 2: Get next page using cursor${NC}"
+    echo -e "${CYAN}CURSOR=\$(curl -s \"http://$HOST_IP:$API_PORT/api/v1/trends?limit=50\" | jq -r '.next_cursor')${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/trends?limit=50&cursor=\$CURSOR\" | jq .${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 3: Filter by region and bucket${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/trends?limit=50&region=us&bucket=news\" | jq .${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 4: Count items only${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/trends\" | jq '.items | length'${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 5: Get all regions${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/regions\" | jq .${NC}"
+    echo ""
+
+    echo -e "${BOLD}Example 6: Get surfaces for a region${NC}"
+    echo -e "${CYAN}curl -s \"http://$HOST_IP:$API_PORT/api/v1/surfaces?region=us\" | jq .${NC}"
+    echo ""
+
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}                    IMPORTANT NOTES                                 ${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    echo "  • Cursor is OPAQUE - Never parse or decode it"
+    echo "  • When filters change, reset cursor (don't pass it)"
+    echo "  • Limit is a HINT - Backend may return fewer items"
+    echo "  • All timestamps are in ISO 8601 UTC format"
+    echo "  • Canonical fields are always in English"
+    echo "  • Deduplication is handled by backend"
+    echo "  • CORS enabled for: localhost:3000, 127.0.0.1:3000"
+    echo ""
+
+    echo -e "${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    read -p "Press Enter to continue..." -r
 }
 
 ################################################################################
