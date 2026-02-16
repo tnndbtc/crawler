@@ -5,9 +5,10 @@ Models:
 1. Region - Geographical/cultural regions
 2. TrendSurface - Configurable data sources (surfaces)
 3. TrendItem - Collected trend items
-4. TrendItemTranslation - Translated content
-5. TranslationSettings - Translation configuration (singleton)
-6. CrawlRun - Execution audit log (observability)
+4. TrendItemTranslation - Translated content (deprecated, kept for migration)
+5. CrawlRun - Execution audit log (observability)
+
+Note: TranslationSettings has been removed. Use translation.models.TranslationConfig instead.
 
 Requirements from: /tmp/t3 + /tmp/t4 + /tmp/t7 + /tmp/t8 + /tmp/t9
 """
@@ -280,6 +281,76 @@ class TrendItem(models.Model):
         help_text="Complete platform response. NEVER throw away data! (from /tmp/t9)"
     )
 
+    # ==========================================================================
+    # Canonical translations (en-US for ranking/analysis)
+    # These fields store the English translation used for cross-regional analysis
+    # ==========================================================================
+    canonical_title = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Canonical (en-US) title for ranking/analysis"
+    )
+    canonical_description = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Canonical (en-US) description for ranking/analysis"
+    )
+    canonical_status = models.CharField(
+        max_length=20,
+        default='pending',
+        choices=[
+            ('pending', 'Pending'),
+            ('complete', 'Complete'),
+            ('failed', 'Failed'),
+            ('skipped', 'Skipped (already English)'),
+        ],
+        help_text="Canonical translation status"
+    )
+    canonical_engine = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="Engine used for canonical translation (deepl, openai, local, none)"
+    )
+    canonical_error = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Error message if canonical translation failed"
+    )
+
+    # ==========================================================================
+    # Display translations (per-locale for UI)
+    # zh-Hans fields for Chinese Simplified display
+    # Add more locales as needed using the same pattern
+    # ==========================================================================
+    display_title_zh_hans = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Chinese Simplified (zh-Hans) title for display"
+    )
+    display_description_zh_hans = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Chinese Simplified (zh-Hans) description for display"
+    )
+    display_status_zh_hans = models.CharField(
+        max_length=20,
+        default='pending',
+        choices=[
+            ('pending', 'Pending'),
+            ('complete', 'Complete'),
+            ('failed', 'Failed'),
+            ('skipped', 'Skipped (already native)'),
+        ],
+        help_text="zh-Hans translation status"
+    )
+    display_engine_zh_hans = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="Engine used for zh-Hans translation"
+    )
+
     class Meta:
         ordering = ['-collected_at']
         verbose_name = "Trend Item"
@@ -303,6 +374,14 @@ class TrendItemTranslation(models.Model):
     """
     Translated version of a trend item.
 
+    DEPRECATED: This model is deprecated. Translation data is now stored
+    directly on TrendItem using the canonical_* and display_*_<locale> fields.
+
+    This model is kept for backward compatibility during migration.
+    New translations should use the TrendItem fields directly via
+    translation.manager.TranslationManager.
+
+    Original description:
     Product constraint (from /tmp/t9):
     - Translation happens ASYNC, never blocks collection
     - Canonical locale (en-US) always attempted for analysis
@@ -377,83 +456,6 @@ class TrendItemTranslation(models.Model):
 
     def __str__(self):
         return f"{self.item.id} → {self.locale} ({self.status})"
-
-
-class TranslationSettings(models.Model):
-    """
-    Global translation configuration (singleton).
-
-    Product constraint (from /tmp/t4 + /tmp/t9):
-    - Canonical locale MUST be en-US for cross-regional analysis
-    - force_canonical_translation ensures all non-English items get English version
-    - Translation is ASYNC, never blocks collection
-    """
-
-    PROVIDER_CHOICES = [
-        ('deepl', 'DeepL'),
-        ('openai', 'OpenAI'),
-        ('argostranslate', 'Argostranslate (Offline)'),
-        ('none', 'No Translation (English variants)'),
-    ]
-
-    translation_enabled = models.BooleanField(
-        default=True,
-        help_text="Master switch for translation worker"
-    )
-    default_provider = models.CharField(
-        max_length=20,
-        choices=PROVIDER_CHOICES,
-        default='deepl',
-        help_text="Primary translation provider (DeepL recommended for quality)"
-    )
-    canonical_locale_for_analysis = models.CharField(
-        max_length=10,
-        default='en-US',
-        help_text="Base language for trend analysis (LOCKED to en-US)"
-    )
-    force_canonical_translation = models.BooleanField(
-        default=True,
-        help_text="Always create en-US translation when original_locale != en-US"
-    )
-    enabled_locales = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Additional locales to translate to (beyond canonical en-US)"
-    )
-    max_chars_per_request = models.IntegerField(
-        default=5000,
-        help_text="Maximum characters per translation request (rate limiting)"
-    )
-
-    class Meta:
-        verbose_name = "Translation Settings"
-        verbose_name_plural = "Translation Settings"
-
-    def __str__(self):
-        return f"Translation Settings (provider: {self.default_provider})"
-
-    def save(self, *args, **kwargs):
-        """Ensure singleton and validate canonical locale."""
-        # Singleton pattern
-        self.pk = 1
-
-        # Validate canonical locale
-        if self.canonical_locale_for_analysis != 'en-US':
-            raise ValidationError(
-                "canonical_locale_for_analysis must be 'en-US' for proper trend analysis"
-            )
-
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        """Prevent deletion of singleton."""
-        raise ValidationError("Cannot delete Translation Settings")
-
-    @classmethod
-    def get_settings(cls):
-        """Get or create singleton instance."""
-        obj, created = cls.objects.get_or_create(pk=1)
-        return obj
 
 
 class CrawlRun(models.Model):

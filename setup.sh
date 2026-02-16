@@ -165,21 +165,29 @@ check_requirements() {
     print_step "Checking .env configuration..."
     if [ -f "$ENV_FILE" ]; then
         print_success ".env file exists"
-
-        # Check for required environment variables
-        local required_vars=("DJANGO_SECRET_KEY" "DEEPL_API_KEY" "OPENAI_API_KEY")
-        for var in "${required_vars[@]}"; do
-            if grep -q "^${var}=" "$ENV_FILE" && ! grep -q "^${var}=your-" "$ENV_FILE"; then
-                print_success "  $var is configured"
-            else
-                print_warning "  $var needs configuration"
-            fi
-        done
     else
-        print_error ".env file not found"
-        print_info "Run option 8 (First-Time Setup) to create it from .env.example"
-        all_ok=false
+        if [ -f "${SCRIPT_DIR}/.env.example" ]; then
+            print_info ".env file not found (will be auto-created from .env.example on start)"
+        else
+            print_error ".env.example not found"
+            all_ok=false
+        fi
     fi
+
+    # Check for required API keys (from environment or .env)
+    print_step "Checking API keys..."
+    local api_vars=("DEEPL_API_KEY" "OPENAI_API_KEY")
+    for var in "${api_vars[@]}"; do
+        # Check environment variable first
+        local env_value=$(printenv "$var" 2>/dev/null)
+        if [ -n "$env_value" ] && [[ ! "$env_value" =~ ^your- ]]; then
+            print_success "  $var is set (from environment)"
+        elif [ -f "$ENV_FILE" ] && grep -q "^${var}=" "$ENV_FILE" && ! grep -q "^${var}=your-" "$ENV_FILE"; then
+            print_success "  $var is set (from .env)"
+        else
+            print_warning "  $var needs configuration (set in environment or .env)"
+        fi
+    done
 
     # Check database
     print_step "Checking database..."
@@ -365,18 +373,36 @@ start_all_services() {
 
     ensure_directories
 
-    # Check .env file
+    # Auto-create .env from .env.example if it doesn't exist
+    # This is safe because critical values (API keys) come from environment variables
     if [ ! -f "$ENV_FILE" ]; then
-        print_error ".env file not found"
-        print_info "Run option 8 (First-Time Setup) first"
-        return 1
+        if [ -f "${SCRIPT_DIR}/.env.example" ]; then
+            cp "${SCRIPT_DIR}/.env.example" "$ENV_FILE"
+            print_info ".env file auto-created from .env.example"
+            print_info "Note: API keys should be set via environment variables"
+        else
+            print_error ".env.example not found - cannot create .env"
+            return 1
+        fi
     fi
 
-    # Check database
+    # Check database - auto-run migrations if not exists
     if [ ! -f "$DB_FILE" ]; then
-        print_error "Database not found"
-        print_info "Run option 8 (First-Time Setup) first"
-        return 1
+        print_warning "Database not found - running migrations..."
+        cd "$SCRIPT_DIR"
+        python3 manage.py migrate 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+        if [ ! -f "$DB_FILE" ]; then
+            print_error "Database creation failed"
+            return 1
+        fi
+        print_success "Database created"
+
+        # Load initial data if available
+        if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
+            print_step "Loading initial data..."
+            python3 manage.py loaddata initial_data 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+            print_success "Initial data loaded"
+        fi
     fi
 
     # Check ports

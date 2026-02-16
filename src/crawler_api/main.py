@@ -245,10 +245,19 @@ def _has_complete_translation(item, locale: str) -> bool:
 
     Helper function for filtering items by translation status.
     Used by chunk-based scanning for zh-Hans requests (from /tmp/t4).
+
+    Checks both new TrendItem fields and legacy TrendItemTranslation table.
     """
+    # Check new TrendItem display fields first
+    if locale == 'zh-Hans':
+        if item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
+            return True
+
+    # Fallback to legacy translations table
     for trans in item.translations.all():
         if trans.locale == locale and trans.status == 'complete':
             return True
+
     return False
 
 
@@ -429,41 +438,57 @@ async def list_trends(
 
     results = []
     for item in items:
-        # Get canonical (en-US) translation
-        canonical_translation = None
-        requested_lang_translation = None
-
-        for trans in item.translations.all():
-            if trans.locale == 'en-US' and trans.status == 'complete':
-                canonical_translation = trans
-            if trans.locale == lang and trans.status == 'complete':
-                requested_lang_translation = trans
-
-        # Use canonical if available, otherwise original
-        # Note: All items reaching this point are guaranteed to be either
-        # originally English or have a completed en-US translation (filtered at DB level)
-        if canonical_translation:
-            canonical_title = canonical_translation.title
-            canonical_description = canonical_translation.description
+        # Get canonical (en-US) translation from new TrendItem fields
+        # Falls back to legacy TrendItemTranslation if new fields not populated
+        if item.canonical_status in ('complete', 'skipped') and item.canonical_title:
+            canonical_title = item.canonical_title
+            canonical_description = item.canonical_description
         else:
-            # Original is already English (no else case needed - filtered at DB)
-            canonical_title = item.title_original
-            canonical_description = item.description_original
+            # Fallback to legacy translations table
+            canonical_translation = None
+            for trans in item.translations.all():
+                if trans.locale == 'en-US' and trans.status == 'complete':
+                    canonical_translation = trans
+                    break
+
+            if canonical_translation:
+                canonical_title = canonical_translation.title
+                canonical_description = canonical_translation.description
+            else:
+                # Original is already English or no translation available
+                canonical_title = item.title_original
+                canonical_description = item.description_original
 
         # Feature A: Populate display fields based on lang parameter
-        # Fallback hierarchy: requested_lang → original (if matches) → canonical (en-US)
-        if requested_lang_translation:
-            # Requested language translation available
-            display_title = requested_lang_translation.title
-            display_description = requested_lang_translation.description
-        elif item.original_locale == lang:
-            # Original content is in requested language
-            display_title = item.title_original
-            display_description = item.description_original
-        else:
-            # Fallback to canonical (en-US)
-            display_title = canonical_title
-            display_description = canonical_description
+        # First check new TrendItem display fields, then fall back to legacy
+        display_title = None
+        display_description = None
+
+        if lang == 'zh-Hans':
+            # Check new zh-Hans fields
+            if item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
+                display_title = item.display_title_zh_hans
+                display_description = item.display_description_zh_hans
+
+        if not display_title:
+            # Fallback to legacy translations table
+            requested_lang_translation = None
+            for trans in item.translations.all():
+                if trans.locale == lang and trans.status == 'complete':
+                    requested_lang_translation = trans
+                    break
+
+            if requested_lang_translation:
+                display_title = requested_lang_translation.title
+                display_description = requested_lang_translation.description
+            elif item.original_locale == lang or item.original_locale.startswith(lang[:2]):
+                # Original content is in requested language
+                display_title = item.title_original
+                display_description = item.description_original
+            else:
+                # Fallback to canonical (en-US)
+                display_title = canonical_title
+                display_description = canonical_description
 
         results.append(
             TrendItemResponse(
@@ -563,43 +588,65 @@ async def crawl_health():
 @app.get("/api/v1/health/translation")
 async def translation_health():
     """
-    Translation queue status.
+    Translation queue status with provider health.
 
     From REQUIREMENTS-MASTER.md (from /tmp/t8):
     GET /api/v1/health/translation - Shows translation queue metrics
 
-    Feature A (from /tmp/t3):
-    - Per-locale breakdown (pending, complete, failed)
-    - Last processed timestamp
+    Enhanced to include:
+    - Provider health status (available, unavailable_*, etc.)
+    - System STOPPED state indicator
+    - Available providers list
+
+    Reports on both new (TrendItem fields) and legacy (TrendItemTranslation) systems.
     """
-    # Count items missing canonical en-US translation
-    missing_canonical_count = await sync_to_async(
-        TrendItem.objects.filter(
-            ~django.db.models.Q(original_locale='en-US')
-        ).exclude(
-            translations__locale='en-US',
-            translations__status='complete'
-        ).count
+    # === Provider Health Status ===
+    from translation.health import ProviderHealthManager
+    provider_health = await ProviderHealthManager.get_health_status()
+
+    # === New System Stats (TrendItem fields) ===
+
+    # Canonical translation stats
+    canonical_pending = await sync_to_async(
+        TrendItem.objects.filter(canonical_status='pending').count
+    )()
+    canonical_complete = await sync_to_async(
+        TrendItem.objects.filter(canonical_status__in=['complete', 'skipped']).count
+    )()
+    canonical_failed = await sync_to_async(
+        TrendItem.objects.filter(canonical_status='failed').count
     )()
 
-    # Count pending translations
-    pending_count = await sync_to_async(
+    # zh-Hans display translation stats
+    zh_hans_pending = await sync_to_async(
+        TrendItem.objects.filter(display_status_zh_hans='pending').count
+    )()
+    zh_hans_complete = await sync_to_async(
+        TrendItem.objects.filter(display_status_zh_hans__in=['complete', 'skipped']).count
+    )()
+    zh_hans_failed = await sync_to_async(
+        TrendItem.objects.filter(display_status_zh_hans='failed').count
+    )()
+
+    # === Legacy System Stats (TrendItemTranslation) ===
+
+    # Count pending translations (legacy)
+    legacy_pending_count = await sync_to_async(
         TrendItemTranslation.objects.filter(status='pending').count
     )()
 
-    # Count failed translations
-    failed_count = await sync_to_async(
+    # Count failed translations (legacy)
+    legacy_failed_count = await sync_to_async(
         TrendItemTranslation.objects.filter(status='failed').count
     )()
 
-    # Feature A: Per-locale breakdown
-    # Get all unique locales in TrendItemTranslation
-    all_locales = await sync_to_async(list)(
+    # Get all unique locales in TrendItemTranslation (legacy)
+    legacy_locales = await sync_to_async(list)(
         TrendItemTranslation.objects.values_list('locale', flat=True).distinct()
     )
 
-    per_locale_stats = {}
-    for locale in all_locales:
+    legacy_per_locale = {}
+    for locale in legacy_locales:
         pending = await sync_to_async(
             TrendItemTranslation.objects.filter(locale=locale, status='pending').count
         )()
@@ -610,13 +657,13 @@ async def translation_health():
             TrendItemTranslation.objects.filter(locale=locale, status='failed').count
         )()
 
-        per_locale_stats[locale] = {
+        legacy_per_locale[locale] = {
             "pending": pending,
             "complete": complete,
             "failed": failed
         }
 
-    # Get last processed timestamp (most recent completed translation)
+    # Get last processed timestamp (most recent completed translation - legacy)
     last_translation = await sync_to_async(
         lambda: TrendItemTranslation.objects.filter(
             status='complete'
@@ -628,11 +675,37 @@ async def translation_health():
         last_processed_at = last_translation.translated_at.isoformat()
 
     return {
-        "missing_canonical_en_count": missing_canonical_count,
-        "pending_count": pending_count,
-        "failed_count": failed_count,
-        "per_locale": per_locale_stats,
-        "last_processed_at": last_processed_at
+        # Provider health status (NEW)
+        "status": provider_health['status'],  # "ok", "degraded", or "stopped"
+        "is_stopped": provider_health['is_stopped'],
+        "available_providers": provider_health['available_providers'],
+        "providers": provider_health['providers'],
+
+        # New system (TrendItem fields)
+        "new_system": {
+            "canonical": {
+                "pending": canonical_pending,
+                "complete": canonical_complete,
+                "failed": canonical_failed,
+            },
+            "display": {
+                "zh-Hans": {
+                    "pending": zh_hans_pending,
+                    "complete": zh_hans_complete,
+                    "failed": zh_hans_failed,
+                }
+            }
+        },
+        # Legacy system (TrendItemTranslation) - for backward compatibility
+        "legacy_system": {
+            "pending_count": legacy_pending_count,
+            "failed_count": legacy_failed_count,
+            "per_locale": legacy_per_locale,
+            "last_processed_at": last_processed_at
+        },
+        # Summary
+        "total_pending": canonical_pending + zh_hans_pending + legacy_pending_count,
+        "total_failed": canonical_failed + zh_hans_failed + legacy_failed_count,
     }
 
 

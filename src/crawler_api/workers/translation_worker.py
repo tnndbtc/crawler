@@ -1,27 +1,35 @@
 """
 Translation worker - Async translation with canonical-first priority.
 
+Refactored to use the new pluggable translation engine architecture:
+- Uses TranslationManager for engine orchestration
+- Updates TrendItem fields directly (not TrendItemTranslation)
+- Supports canonical (en-US) and display (zh-Hans) translations
+- Fallback handling via TranslationConfig
+
+Provider Failover & STOPPED State:
+- Checks provider health before processing
+- When all providers unavailable, enters STOPPED state
+- Health probes attempt recovery every 5 minutes
+- Items stay 'pending' when providers unavailable (not marked 'failed')
+
 From REQUIREMENTS-MASTER.md and /tmp/t9:
 - Translation NEVER blocks collection (async)
 - Canonical locale (en-US) always attempted for non-English items
-- force_canonical_translation ensures all items get English version
-- Processes pending translations using DeepL or OpenAI
-- Updates TrendItemTranslation status
-
-Product constraint (from /tmp/t9):
-- Translation is ASYNC, never blocks ingestion
-- Feed can show original content, upgrade to translated later
-- Canonical en-US enables cross-regional analysis
+- Processes pending translations using configured engines
+- Updates TrendItem canonical/display fields
 """
 
 import os
 import sys
 import asyncio
 import logging
-from typing import List, Optional
+import time
+from typing import List
 
 import django
 from django.utils import timezone
+from django.db.models import Q
 from asgiref.sync import sync_to_async
 
 # Setup Django
@@ -29,414 +37,493 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
-from crawler_admin.models import (
-    TrendItem,
-    TrendItemTranslation,
-    TranslationSettings
-)
-from crawler_api.translation.providers import get_provider, TranslationError
+from crawler_admin.models import TrendItem
+from translation.manager import TranslationManager
+from translation.models import TranslationConfig
+from translation.health import ProviderHealthManager
+
+# Legacy imports for backward compatibility
+from crawler_admin.models import TrendItemTranslation
 
 logger = logging.getLogger(__name__)
-
 
 # Configuration from environment
 TRANSLATION_WORKER_POLL_INTERVAL = int(os.getenv('TRANSLATION_WORKER_POLL_INTERVAL', '30'))
 
+# Health probe configuration
+HEALTH_PROBE_INTERVAL = 300  # 5 minutes between health probes when STOPPED
+_last_health_probe_time: float = 0
 
-async def create_missing_canonical_translations():
+
+async def process_canonical_translations(manager: TranslationManager, batch_size: int = 10) -> int:
     """
-    Create pending en-US translations for items that need them.
+    Process pending canonical (en-US) translations.
 
-    From /tmp/t4 and /tmp/t9:
-    - If force_canonical_translation=True, all non-English items get en-US translation
-    - Creates TrendItemTranslation records in 'pending' status
-    - Canonical-first priority (en-US before other locales)
+    Updates TrendItem.canonical_* fields directly.
+
+    Args:
+        manager: TranslationManager instance
+        batch_size: Number of items to process per batch
+
+    Returns:
+        Number of items processed
     """
-    settings = await sync_to_async(TranslationSettings.get_settings)()
+    config = await manager.get_config()
 
-    if not settings.translation_enabled:
-        logger.debug("Translation disabled, skipping")
+    if not config.enable_translation:
+        logger.info("Translation disabled, skipping canonical processing")
         return 0
 
-    if not settings.force_canonical_translation:
-        logger.debug("force_canonical_translation disabled, skipping")
-        return 0
-
-    canonical_locale = settings.canonical_locale_for_analysis
-
-    # Find items without canonical translation
-    # - original_locale != en-US (non-English items)
-    # - No existing en-US translation
-    # - SKIP English variants (en-GB, en-AU, etc.) - they don't need translation
-    items_needing_translation = await sync_to_async(list)(
-        TrendItem.objects.exclude(
-            original_locale=canonical_locale
+    # Find items needing canonical translation:
+    # - canonical_status = 'pending'
+    # - Not already English (would be 'skipped')
+    items_need_canonical = await sync_to_async(list)(
+        TrendItem.objects.filter(
+            canonical_status='pending'
         ).exclude(
-            original_locale__startswith='en-'  # Skip all English variants
-        ).exclude(
-            translations__locale=canonical_locale
-        )[:100]  # Batch size
+            original_locale__startswith='en-'
+        ).select_related('region', 'surface')[:batch_size]
     )
 
-    created_count = 0
-    for item in items_needing_translation:
-        try:
-            # Create pending translation
-            await sync_to_async(TrendItemTranslation.objects.create)(
-                item=item,
-                locale=canonical_locale,
-                title='',  # Will be filled by translation
-                description='',
-                status='pending',
-                provider=settings.default_provider
-            )
-            created_count += 1
-            logger.debug(
-                f"Created pending translation: item #{item.id} "
-                f"{item.original_locale} → {canonical_locale} | "
-                f"Provider: {settings.default_provider}"
-            )
-        except django.db.utils.IntegrityError:
-            # Already exists (race condition)
-            continue
-
-    if created_count > 0:
-        logger.info(
-            f"Created {created_count} pending canonical translation(s) "
-            f"with provider={settings.default_provider}"
-        )
-
-    return created_count
-
-
-async def create_missing_additional_locale_translations():
-    """
-    Create pending translations for enabled_locales (e.g., zh-Hans).
-
-    Feature A (from /tmp/t3):
-    - Supports bidirectional translation (en-US ↔ zh-Hans)
-    - Creates translations for all enabled_locales beyond canonical en-US
-    - Skip if original_locale matches target locale (already native)
-    """
-    settings = await sync_to_async(TranslationSettings.get_settings)()
-
-    if not settings.translation_enabled:
+    if not items_need_canonical:
+        logger.debug("No items need canonical translation")
         return 0
 
-    enabled_locales = settings.enabled_locales or []
-    if not enabled_locales:
-        logger.debug("No additional locales enabled, skipping")
-        return 0
-
-    total_created = 0
-
-    for target_locale in enabled_locales:
-        # Find items without this locale translation
-        # - original_locale != target_locale (skip if already native)
-        # - No existing translation for this locale
-        items_needing_translation = await sync_to_async(list)(
-            TrendItem.objects.exclude(
-                original_locale=target_locale
-            ).exclude(
-                translations__locale=target_locale
-            )[:100]  # Batch size per locale
-        )
-
-        created_count = 0
-        for item in items_needing_translation:
-            try:
-                # Create pending translation
-                await sync_to_async(TrendItemTranslation.objects.create)(
-                    item=item,
-                    locale=target_locale,
-                    title='',  # Will be filled by translation
-                    description='',
-                    status='pending',
-                    provider=settings.default_provider
-                )
-                created_count += 1
-                logger.debug(
-                    f"Created pending translation: item #{item.id} "
-                    f"{item.original_locale} → {target_locale} | "
-                    f"Provider: {settings.default_provider}"
-                )
-            except django.db.utils.IntegrityError:
-                # Already exists (race condition)
-                continue
-
-        if created_count > 0:
-            logger.info(
-                f"Created {created_count} pending {target_locale} translation(s) "
-                f"with provider={settings.default_provider}"
-            )
-            total_created += created_count
-
-    return total_created
-
-
-async def process_pending_translations(batch_size: int = 10):
-    """
-    Process pending translations.
-
-    From REQUIREMENTS-MASTER.md:
-    1. Get pending translations (limit batch_size)
-    2. Update status to 'running'
-    3. Call translation API
-    4. Update status to 'complete' or 'failed'
-    5. Store translated text and error message
-
-    Provider selection (from /tmp/t4):
-    - Uses TrendItemTranslation.provider
-    - Falls back to default_provider
-    """
-    settings = await sync_to_async(TranslationSettings.get_settings)()
-
-    if not settings.translation_enabled:
-        return 0
-
-    # Get pending translations
-    pending_translations = await sync_to_async(list)(
-        TrendItemTranslation.objects.filter(
-            status='pending'
-        ).select_related('item')[:batch_size]
-    )
-
-    if not pending_translations:
-        logger.debug("No pending translations")
-        return 0
-
-    logger.info(f"Processing {len(pending_translations)} pending translation(s)")
+    logger.info(f"Processing {len(items_need_canonical)} canonical translation(s)")
 
     processed_count = 0
-    for translation in pending_translations:
+    for item in items_need_canonical:
         try:
-            # Update status to running
-            translation.status = 'running'
-            await sync_to_async(translation.save)(update_fields=['status'])
-
-            # Get provider
-            provider_name = translation.provider or settings.default_provider
-            logger.info(
-                f"📝 Processing item #{translation.item.id}: "
-                f"{translation.item.original_locale} → {translation.locale} | "
-                f"Provider: {provider_name}"
+            logger.debug(
+                f"📝 Canonical: item #{item.id} | "
+                f"{item.original_locale} → en-US | "
+                f"Title: {item.title_original[:50]}..."
             )
-            provider = get_provider(provider_name)
 
-            # Extract text to translate
-            source_locale = translation.item.original_locale
-            target_locale = translation.locale
-            title = translation.item.title_original
-            description = translation.item.description_original or ''
+            result = await manager.translate_item_canonical(item)
 
-            # Skip translation for English variants (en-GB, en-AU, etc. → en-US)
-            # Just copy the original text
-            if source_locale.startswith('en-') and target_locale.startswith('en-'):
+            if result.success:
+                item.canonical_title = result.title
+                item.canonical_description = result.description
+                item.canonical_status = 'complete'
+                item.canonical_engine = result.engine
+                item.canonical_error = None
+
                 logger.info(
-                    f"Skipping translation for English variant: {source_locale} → {target_locale} "
-                    f"(item #{translation.item.id}), using original text"
+                    f"✅ Canonical translated: item #{item.id} | "
+                    f"engine: {result.engine}"
                 )
-                translation.title = title
-                translation.description = description
-                translation.status = 'complete'
-                translation.translated_at = timezone.now()
-                translation.provider = 'none'  # No translation needed
-                translation.error_message = None
-                await sync_to_async(translation.save)()
-                processed_count += 1
+            elif result.engine in ('system_stopped', 'none_available'):
+                # Provider unavailable - keep item as pending
+                # Don't update status or save, just skip this item
+                logger.info(
+                    f"⏸️ Canonical skipped (providers unavailable): item #{item.id}"
+                )
                 continue
+            else:
+                item.canonical_status = 'failed'
+                item.canonical_error = result.error
+                item.canonical_engine = result.engine
 
-            # Translate title (always)
-            translated_title = await provider.translate(
-                text=title,
-                source_locale=source_locale,
-                target_locale=target_locale
-            )
-
-            # Translate description (if exists)
-            translated_description = ''
-            if description:
-                translated_description = await provider.translate(
-                    text=description,
-                    source_locale=source_locale,
-                    target_locale=target_locale
+                logger.warning(
+                    f"❌ Canonical failed: item #{item.id} | "
+                    f"error: {result.error}"
                 )
 
-            # Success
-            translation.title = translated_title
-            translation.description = translated_description
-            translation.status = 'complete'
-            translation.translated_at = timezone.now()
-            translation.provider = provider_name  # Record which provider was used
-            translation.error_message = None
-            await sync_to_async(translation.save)()
-
-            logger.info(
-                f"Translated item #{translation.item.id} "
-                f"{source_locale} → {target_locale} "
-                f"(provider: {provider_name})"
+            await sync_to_async(item.save)(
+                update_fields=[
+                    'canonical_title', 'canonical_description',
+                    'canonical_status', 'canonical_engine', 'canonical_error'
+                ]
             )
-
             processed_count += 1
 
-        except TranslationError as e:
-            # Translation provider failed (DeepL quota, auth, API error, etc.)
-            # Fall back to argostranslate offline translation
-            logger.warning(
-                f"⚠️  Translation provider failed! Falling back to argostranslate offline translation. "
-                f"Provider: {provider_name}, Error: {e}"
-            )
-
-            try:
-                # Retry with argostranslate offline provider
-                logger.info(f"Retrying translation for item #{translation.item.id} with argostranslate provider...")
-                local_provider = get_provider("argostranslate")
-
-                # Extract text again (already have it from above)
-                source_locale = translation.item.original_locale
-                target_locale = translation.locale
-                title = translation.item.title_original
-                description = translation.item.description_original or ''
-
-                # Translate with argostranslate provider
-                translated_title = await local_provider.translate(
-                    text=title,
-                    source_locale=source_locale,
-                    target_locale=target_locale
-                )
-
-                translated_description = ''
-                if description:
-                    translated_description = await local_provider.translate(
-                        text=description,
-                        source_locale=source_locale,
-                        target_locale=target_locale
-                    )
-
-                # Success with argostranslate provider
-                translation.title = translated_title
-                translation.description = translated_description
-                translation.status = 'complete'
-                translation.translated_at = timezone.now()
-                translation.provider = 'argostranslate'  # Record that we used argostranslate fallback
-                translation.error_message = None
-                await sync_to_async(translation.save)()
-
-                logger.info(
-                    f"✓ Translated item #{translation.item.id} with argostranslate provider "
-                    f"{source_locale} → {target_locale} (fallback from {provider_name})"
-                )
-
-                processed_count += 1
-
-            except Exception as local_error:
-                # Argostranslate translation also failed
-                logger.error(
-                    f"Argostranslate translation fallback failed for item #{translation.item.id}: {local_error}"
-                )
-                # Mark as failed since both primary provider and argostranslate failed
-                translation.status = 'failed'
-                translation.error_message = f"{provider_name} failed ({e}), argostranslate fallback also failed: {local_error}"
-                await sync_to_async(translation.save)(
-                    update_fields=['status', 'error_message']
-                )
-
         except Exception as e:
-            # Translation failed for other reasons
-            error_msg = str(e)
-            translation.status = 'failed'
-            translation.error_message = error_msg
-            await sync_to_async(translation.save)(
-                update_fields=['status', 'error_message']
-            )
-
-            logger.error(
-                f"Translation failed for item #{translation.item.id}: {error_msg}",
-                exc_info=True
+            logger.error(f"Error processing canonical for item #{item.id}: {e}", exc_info=True)
+            # Mark as failed
+            item.canonical_status = 'failed'
+            item.canonical_error = str(e)
+            await sync_to_async(item.save)(
+                update_fields=['canonical_status', 'canonical_error']
             )
 
     return processed_count
 
 
-async def test_deepl_connectivity():
+async def process_display_translations(
+    manager: TranslationManager,
+    target_locale: str,
+    batch_size: int = 10
+) -> int:
     """
-    Test DeepL API connectivity on startup.
+    Process pending display translations for a specific locale.
 
-    Attempts a simple translation to verify:
-    - API key is valid
-    - Endpoint is reachable
-    - Account has quota available
+    Updates TrendItem.display_*_{locale} fields directly.
+
+    Args:
+        manager: TranslationManager instance
+        target_locale: Target locale (e.g., 'zh-Hans')
+        batch_size: Number of items to process per batch
+
+    Returns:
+        Number of items processed
     """
-    try:
-        logger.info("🔍 Testing DeepL API connectivity...")
+    config = await manager.get_config()
 
-        settings = await sync_to_async(TranslationSettings.get_settings)()
-        if settings.default_provider != 'deepl':
-            logger.info(f"Default provider is '{settings.default_provider}', skipping DeepL test")
-            return
+    if not config.enable_translation:
+        return 0
 
-        provider = get_provider('deepl')
+    # Map locale to field name suffix (zh-Hans → zh_hans)
+    locale_suffix = target_locale.replace('-', '_').lower()
+    status_field = f'display_status_{locale_suffix}'
+    title_field = f'display_title_{locale_suffix}'
+    description_field = f'display_description_{locale_suffix}'
+    engine_field = f'display_engine_{locale_suffix}'
 
-        # Simple test translation: "Hello" from English to Spanish
-        result = await provider.translate(
-            text="Hello",
-            source_locale="en-US",
-            target_locale="es-ES"
+    # Check if fields exist
+    if not hasattr(TrendItem, status_field):
+        logger.warning(f"TrendItem has no field '{status_field}', skipping {target_locale}")
+        return 0
+
+    # Find items needing display translation
+    filter_kwargs = {status_field: 'pending'}
+    items_need_display = await sync_to_async(list)(
+        TrendItem.objects.filter(**filter_kwargs)
+        .exclude(original_locale=target_locale)  # Skip if already native
+        .select_related('region', 'surface')[:batch_size]
+    )
+
+    if not items_need_display:
+        logger.debug(f"No items need {target_locale} display translation")
+        return 0
+
+    logger.info(f"Processing {len(items_need_display)} {target_locale} display translation(s)")
+
+    processed_count = 0
+    for item in items_need_display:
+        try:
+            logger.debug(
+                f"📝 Display ({target_locale}): item #{item.id} | "
+                f"{item.original_locale} → {target_locale}"
+            )
+
+            result = await manager.translate_item_display(item, target_locale)
+
+            if result.success:
+                setattr(item, title_field, result.title)
+                setattr(item, description_field, result.description)
+                setattr(item, status_field, 'complete')
+                setattr(item, engine_field, result.engine)
+
+                logger.info(
+                    f"✅ Display ({target_locale}) translated: item #{item.id} | "
+                    f"engine: {result.engine}"
+                )
+            elif result.engine in ('system_stopped', 'none_available'):
+                # Provider unavailable - keep item as pending
+                # Don't update status or save, just skip this item
+                logger.info(
+                    f"⏸️ Display ({target_locale}) skipped (providers unavailable): item #{item.id}"
+                )
+                continue
+            else:
+                setattr(item, status_field, 'failed')
+                setattr(item, engine_field, result.engine)
+
+                logger.warning(
+                    f"❌ Display ({target_locale}) failed: item #{item.id} | "
+                    f"error: {result.error}"
+                )
+
+            await sync_to_async(item.save)(
+                update_fields=[title_field, description_field, status_field, engine_field]
+            )
+            processed_count += 1
+
+        except Exception as e:
+            logger.error(
+                f"Error processing display ({target_locale}) for item #{item.id}: {e}",
+                exc_info=True
+            )
+            setattr(item, status_field, 'failed')
+            await sync_to_async(item.save)(update_fields=[status_field])
+
+    return processed_count
+
+
+async def mark_english_items_as_skipped(batch_size: int = 100) -> int:
+    """
+    Mark English items as 'skipped' for canonical translation.
+
+    These items don't need translation since they're already in English.
+
+    Returns:
+        Number of items marked
+    """
+    items = await sync_to_async(list)(
+        TrendItem.objects.filter(
+            canonical_status='pending',
+            original_locale__startswith='en-'
+        )[:batch_size]
+    )
+
+    if not items:
+        return 0
+
+    marked_count = 0
+    for item in items:
+        item.canonical_status = 'skipped'
+        item.canonical_title = item.title_original
+        item.canonical_description = item.description_original
+        item.canonical_engine = 'none'
+        await sync_to_async(item.save)(
+            update_fields=[
+                'canonical_status', 'canonical_title',
+                'canonical_description', 'canonical_engine'
+            ]
+        )
+        marked_count += 1
+
+    if marked_count > 0:
+        logger.info(f"Marked {marked_count} English item(s) as skipped for canonical translation")
+
+    return marked_count
+
+
+async def mark_native_items_as_skipped(target_locale: str, batch_size: int = 100) -> int:
+    """
+    Mark items already in target locale as 'skipped' for display translation.
+
+    Returns:
+        Number of items marked
+    """
+    locale_suffix = target_locale.replace('-', '_').lower()
+    status_field = f'display_status_{locale_suffix}'
+    title_field = f'display_title_{locale_suffix}'
+    description_field = f'display_description_{locale_suffix}'
+    engine_field = f'display_engine_{locale_suffix}'
+
+    if not hasattr(TrendItem, status_field):
+        return 0
+
+    # Find items where original_locale matches or starts with target base
+    # e.g., zh-Hans items for zh-Hans display
+    filter_kwargs = {
+        status_field: 'pending',
+        'original_locale__startswith': target_locale[:2]
+    }
+
+    items = await sync_to_async(list)(
+        TrendItem.objects.filter(**filter_kwargs)[:batch_size]
+    )
+
+    if not items:
+        return 0
+
+    marked_count = 0
+    for item in items:
+        setattr(item, status_field, 'skipped')
+        setattr(item, title_field, item.title_original)
+        setattr(item, description_field, item.description_original)
+        setattr(item, engine_field, 'none')
+        await sync_to_async(item.save)(
+            update_fields=[status_field, title_field, description_field, engine_field]
+        )
+        marked_count += 1
+
+    if marked_count > 0:
+        logger.info(
+            f"Marked {marked_count} native {target_locale} item(s) as skipped for display translation"
         )
 
-        logger.info(f"✅ DeepL API test successful! Test translation result: '{result}'")
+    return marked_count
 
-        # Try to get usage stats if available
-        if hasattr(provider, 'get_usage'):
-            usage = await provider.get_usage()
-            if usage:
-                logger.info(
-                    f"📊 DeepL usage stats: {usage.character.count}/{usage.character.limit} "
-                    f"characters used ({usage.character.count / usage.character.limit * 100:.1f}%)"
-                )
+
+async def test_engine_connectivity(manager: TranslationManager):
+    """
+    Test translation engine connectivity on startup.
+
+    Tests the primary canonical engine to verify it's working.
+    """
+    config = await manager.get_config()
+    primary_engine = config.canonical_engine
+
+    logger.info(f"🔍 Testing {primary_engine} engine connectivity...")
+
+    try:
+        success = await manager.test_engine(primary_engine)
+
+        if success:
+            logger.info(f"✅ {primary_engine} engine test successful!")
+            # Mark provider as available on successful test
+            await ProviderHealthManager.mark_success(primary_engine)
+        else:
+            logger.warning(
+                f"⚠️ {primary_engine} engine test failed! "
+                f"Translation worker will use fallback engines."
+            )
 
     except Exception as e:
         logger.error(
-            f"❌ DeepL API connectivity test FAILED: {e}\n"
-            f"   Translation worker will continue, but DeepL translations will fail!\n"
-            f"   Check your DEEPL_API_KEY environment variable and account status.",
+            f"❌ {primary_engine} engine connectivity test FAILED: {e}\n"
+            f"   Translation worker will continue with fallback engines.",
             exc_info=True
         )
+
+
+def should_run_health_probe() -> bool:
+    """
+    Check if enough time has passed to run a health probe.
+
+    Returns:
+        True if health probe should run
+    """
+    global _last_health_probe_time
+    current_time = time.time()
+
+    if current_time - _last_health_probe_time >= HEALTH_PROBE_INTERVAL:
+        _last_health_probe_time = current_time
+        return True
+    return False
+
+
+async def run_health_probes(manager: TranslationManager) -> bool:
+    """
+    Run health probes for unavailable providers.
+
+    Tests each unavailable provider with a lightweight translation.
+    If any provider recovers, marks it as available.
+
+    Args:
+        manager: TranslationManager instance
+
+    Returns:
+        True if any provider recovered
+    """
+    logger.info("🏥 Running health probes for unavailable providers...")
+
+    unavailable = await ProviderHealthManager.get_unavailable_providers()
+    if not unavailable:
+        logger.debug("No unavailable providers to probe")
+        return False
+
+    any_recovered = False
+
+    for provider in unavailable:
+        logger.debug(f"Probing provider: {provider}")
+
+        # Test with a lightweight translation
+        async def test_provider(p):
+            await manager.test_engine(p)
+
+        success, error = await ProviderHealthManager.run_health_probe(
+            provider, test_provider
+        )
+
+        if success:
+            logger.info(f"✅ Provider {provider} recovered!")
+            any_recovered = True
+        else:
+            logger.debug(f"Provider {provider} still unavailable: {error}")
+
+    if any_recovered:
+        logger.info("🎉 At least one provider recovered, resuming normal operation")
+    else:
+        logger.info("All probed providers still unavailable")
+
+    return any_recovered
 
 
 async def run_worker_loop():
     """
     Main worker loop.
 
-    From REQUIREMENTS-MASTER.md + Feature A (from /tmp/t3):
-    1. Create missing canonical translations (canonical-first priority)
-    2. Create missing additional locale translations (zh-Hans, etc.)
-    3. Process pending translations
-    4. Sleep TRANSLATION_WORKER_POLL_INTERVAL
-    5. Repeat forever (worker never crashes)
-    """
-    logger.info("Translation worker started")
-    logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}")
+    STOPPED State Handling:
+    - When all providers unavailable, enters STOPPED state
+    - In STOPPED state, runs health probes every 5 minutes
+    - When a provider recovers, resumes normal operation
 
-    # Test DeepL connectivity on startup
-    await test_deepl_connectivity()
+    Normal Operation:
+    1. Check STOPPED state (all providers unavailable)
+    2. Mark English items as skipped (no canonical translation needed)
+    3. Process canonical (en-US) translations
+    4. Mark native items as skipped for each display locale
+    5. Process display translations for each enabled locale
+    6. Sleep and repeat
+    """
+    logger.info("Translation worker started (new architecture)")
+    logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}")
+    logger.info(f"HEALTH_PROBE_INTERVAL: {HEALTH_PROBE_INTERVAL}s")
+
+    # Initialize manager
+    manager = TranslationManager()
+
+    # Test engine connectivity on startup
+    await test_engine_connectivity(manager)
 
     while True:
         try:
-            # 1. Create missing canonical translations (en-US) - canonical-first priority
-            created_canonical = await create_missing_canonical_translations()
+            # Refresh config each cycle to pick up admin changes
+            config = await manager.reload_config()
 
-            # 2. Create missing additional locale translations (zh-Hans, etc.)
-            created_additional = await create_missing_additional_locale_translations()
+            if not config.enable_translation:
+                logger.info("Translation disabled, sleeping...")
+                await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
+                continue
 
-            # 3. Process pending translations
-            processed = await process_pending_translations(batch_size=10)
+            # Check STOPPED state (all providers unavailable)
+            if await ProviderHealthManager.is_stopped():
+                logger.warning("⛔ System STOPPED: all providers unavailable")
 
-            if created_canonical > 0 or created_additional > 0 or processed > 0:
+                # Run health probes periodically
+                if should_run_health_probe():
+                    recovered = await run_health_probes(manager)
+                    if recovered:
+                        logger.info("Provider recovered! Resuming normal operation...")
+                        # Continue to normal processing
+                    else:
+                        # Still stopped, sleep and try again
+                        await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
+                        continue
+                else:
+                    # Not time for health probe yet, just sleep
+                    remaining = HEALTH_PROBE_INTERVAL - (time.time() - _last_health_probe_time)
+                    logger.debug(
+                        f"STOPPED state: next health probe in {remaining:.0f}s"
+                    )
+                    await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
+                    continue
+
+            batch_size = config.batch_size
+
+            # 1. Mark English items as skipped
+            skipped_english = await mark_english_items_as_skipped(batch_size)
+
+            # 2. Process canonical translations
+            processed_canonical = await process_canonical_translations(manager, batch_size)
+
+            # 3. Process display translations for each enabled locale
+            processed_display = {}
+            for locale in config.enabled_locales:
+                # Mark native items as skipped
+                skipped_native = await mark_native_items_as_skipped(locale, batch_size)
+
+                # Process translations
+                count = await process_display_translations(manager, locale, batch_size)
+                processed_display[locale] = count
+
+            # Log summary
+            total_processed = processed_canonical + sum(processed_display.values())
+            if total_processed > 0 or skipped_english > 0:
+                display_summary = ', '.join(
+                    f"{locale}={count}"
+                    for locale, count in processed_display.items()
+                )
                 logger.info(
-                    f"Created canonical: {created_canonical}, "
-                    f"Created additional: {created_additional}, "
-                    f"Processed: {processed}"
+                    f"Cycle complete: "
+                    f"canonical={processed_canonical}, "
+                    f"display=[{display_summary}], "
+                    f"skipped_english={skipped_english}"
                 )
 
         except Exception as e:

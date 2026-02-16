@@ -1,0 +1,68 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls %}
+
+{% block result_list %}
+{{ block.super }}
+
+{% if show_prompts_section %}
+<div id="prompt-templates-section" style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border: 1px solid #dee2e6;">
+    <h2 style="margin-top: 0; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px;">
+        Prompt Templates (for OpenAI)
+    </h2>
+    <p style="color: #666; margin-bottom: 15px;">
+        These templates are used when OpenAI is selected as the translation engine.
+        <a href="{% url 'admin:translation_prompttemplate_add' %}" class="addlink" style="margin-left: 10px;">Add new template</a>
+    </p>
+
+    {% if prompt_templates %}
+    <table style="width: 100%; border-collapse: collapse; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <thead>
+            <tr style="background: #f1f3f5;">
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Name</th>
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Type</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Default</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Status</th>
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for template in prompt_templates %}
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 12px;">
+                    <a href="{% url 'admin:translation_prompttemplate_change' template.pk %}" style="color: #007bff; text-decoration: none; font-weight: 500;">
+                        {{ template.name }}
+                    </a>
+                </td>
+                <td style="padding: 12px;">
+                    {% if template.translation_type == 'canonical' %}
+                        <span style="background: #e3f2fd; color: #1565c0; padding: 3px 8px; border-radius: 4px; font-size: 12px;">Canonical</span>
+                    {% else %}
+                        <span style="background: #f3e5f5; color: #7b1fa2; padding: 3px 8px; border-radius: 4px; font-size: 12px;">Display</span>
+                    {% endif %}
+                </td>
+                <td style="padding: 12px; text-align: center;">
+                    {% if template.is_default %}*{% else %}-{% endif %}
+                </td>
+                <td style="padding: 12px; text-align: center;">
+                    {% if template.active %}
+                        <span style="color: green;">Active</span>
+                    {% else %}
+                        <span style="color: red;">Inactive</span>
+                    {% endif %}
+                </td>
+                <td style="padding: 12px;">
+                    <a href="{% url 'admin:translation_prompttemplate_change' template.pk %}" style="color: #007bff; text-decoration: none;">Edit</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #999; text-align: center; padding: 20px;">
+        No prompt templates configured.
+        <a href="{% url 'admin:translation_prompttemplate_add' %}">Add your first template</a>
+    </p>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

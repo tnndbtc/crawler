@@ -34,6 +34,7 @@ INSTALLED_APPS = [
 
     # Our apps
     'crawler_admin.apps.CrawlerAdminConfig',
+    'translation.apps.TranslationAppConfig',
 ]
 
 MIDDLEWARE = [

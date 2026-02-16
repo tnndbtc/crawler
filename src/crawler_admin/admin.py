@@ -7,7 +7,8 @@ Requirements from REQUIREMENTS-MASTER.md:
 - TrendSurface: Health indicators, bulk enable/disable
 - Region: Basic CRUD
 - TrendItemTranslation: Basic CRUD with filters
-- TranslationSettings: Singleton editing
+
+Note: TranslationSettings has been removed. Use translation.models.TranslationConfig instead.
 """
 
 from django.contrib import admin
@@ -19,7 +20,6 @@ from .models import (
     TrendSurface,
     TrendItem,
     TrendItemTranslation,
-    TranslationSettings,
     CrawlRun
 )
 
@@ -257,13 +257,32 @@ class TrendItemAdmin(admin.ModelAdmin):
             'fields': ('rank_position', 'engagement_signals', 'published_at'),
             'description': 'rank_position is MORE important than timestamps (product constraint)'
         }),
+        ('Canonical Translation (en-US)', {
+            'fields': (
+                'canonical_title', 'canonical_description',
+                'canonical_status', 'canonical_engine', 'canonical_error'
+            ),
+            'description': 'English translation for ranking/analysis'
+        }),
+        ('Display Translation (zh-Hans)', {
+            'fields': (
+                'display_title_zh_hans', 'display_description_zh_hans',
+                'display_status_zh_hans', 'display_engine_zh_hans'
+            ),
+            'description': 'Chinese Simplified translation for UI display',
+            'classes': ('collapse',)
+        }),
         ('Metadata', {
             'fields': ('canonical_hash', 'collected_at', 'raw_payload'),
             'classes': ('collapse',)
         }),
     )
 
-    readonly_fields = ['canonical_hash', 'collected_at']
+    readonly_fields = [
+        'canonical_hash', 'collected_at',
+        'canonical_status', 'canonical_engine', 'canonical_error',
+        'display_status_zh_hans', 'display_engine_zh_hans'
+    ]
 
     def title_snippet(self, obj):
         """Display truncated title."""
@@ -279,18 +298,25 @@ class TrendItemAdmin(admin.ModelAdmin):
     platform_display.short_description = 'Platform'
 
     def canonical_status(self, obj):
-        """Show if canonical en-US translation exists."""
-        has_canonical = obj.translations.filter(
-            locale='en-US',
-            status='complete'
-        ).exists()
-
-        if has_canonical:
+        """Show canonical translation status using new fields."""
+        # First check new fields
+        if obj.canonical_status == 'complete':
             return format_html('✅ <span style="color: green;">Translated</span>')
-        elif obj.original_locale == 'en-US':
+        elif obj.canonical_status == 'skipped' or obj.original_locale.startswith('en-'):
             return format_html('🇺🇸 <span style="color: blue;">Original EN</span>')
+        elif obj.canonical_status == 'failed':
+            return format_html('❌ <span style="color: red;">Failed</span>')
+        elif obj.canonical_status == 'pending':
+            # Fallback: check old translations table for backward compatibility
+            has_canonical = obj.translations.filter(
+                locale='en-US',
+                status='complete'
+            ).exists()
+            if has_canonical:
+                return format_html('✅ <span style="color: green;">Translated (legacy)</span>')
+            return format_html('⏳ <span style="color: orange;">Pending</span>')
         else:
-            return format_html('❌ <span style="color: red;">Missing</span>')
+            return format_html('❓ <span style="color: gray;">Unknown</span>')
     canonical_status.short_description = 'Canonical EN'
 
 
@@ -417,57 +443,6 @@ class CrawlRunAdmin(admin.ModelAdmin):
         else:
             return f'{ms/60000:.1f}m'
     duration_display.short_description = 'Duration'
-
-
-@admin.register(TranslationSettings)
-class TranslationSettingsAdmin(admin.ModelAdmin):
-    """
-    Singleton configuration for translation.
-
-    Special handling:
-    - Only one instance allowed (pk=1)
-    - Cannot delete
-    - canonical_locale_for_analysis MUST be en-US
-    """
-    fieldsets = (
-        ('Master Switch', {
-            'fields': ('translation_enabled',)
-        }),
-        ('Provider Settings', {
-            'fields': ('default_provider',)
-        }),
-        ('Canonical Language', {
-            'fields': ('canonical_locale_for_analysis', 'force_canonical_translation'),
-            'description': 'Canonical locale MUST be en-US for cross-regional analysis'
-        }),
-        ('Additional Locales', {
-            'fields': ('enabled_locales',),
-            'description': 'Extra locales to translate to (beyond canonical en-US)'
-        }),
-        ('Rate Limiting', {
-            'fields': ('max_chars_per_request',)
-        }),
-    )
-
-    def has_add_permission(self, request):
-        # Only allow if no instance exists
-        return not TranslationSettings.objects.exists()
-
-    def has_delete_permission(self, request, obj=None):
-        # Cannot delete singleton
-        return False
-
-    def changelist_view(self, request, extra_context=None):
-        # If instance exists, redirect to edit page
-        try:
-            obj = TranslationSettings.objects.get(pk=1)
-            from django.urls import reverse
-            from django.shortcuts import redirect
-            return redirect(reverse('admin:crawler_admin_translationsettings_change', args=[obj.pk]))
-        except TranslationSettings.DoesNotExist:
-            pass
-
-        return super().changelist_view(request, extra_context)
 
 
 # Customize admin site
