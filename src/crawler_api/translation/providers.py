@@ -251,8 +251,11 @@ class DeepLTranslationProvider:
             return text
 
         # Map our locales to DeepL language codes
-        source_lang = self._map_locale(source_locale)
-        target_lang = self._map_locale(target_locale)
+        # IMPORTANT: DeepL has different requirements for source vs target:
+        # - source_lang: Only accepts base codes (EN, not EN-US)
+        # - target_lang: Accepts variant codes (EN-US, EN-GB, PT-BR, etc.)
+        source_lang = self._map_locale_source(source_locale)
+        target_lang = self._map_locale_target(target_locale)
 
         try:
             # DeepL SDK is synchronous, so run in executor
@@ -276,15 +279,46 @@ class DeepLTranslationProvider:
             logger.error(f"DeepL translation failed: {e}")
             raise TranslationError(f"DeepL translation failed: {e}") from e
 
-    def _map_locale(self, locale: str) -> str:
+    def _map_locale_source(self, locale: str) -> str:
         """
-        Map our locale code to DeepL language code.
+        Map our locale code to DeepL SOURCE language code.
+
+        DeepL source_lang only accepts base codes (EN, JA, ZH, etc.)
+        NOT variant codes (EN-US, EN-GB are invalid for source).
 
         Args:
             locale: Our locale code (e.g., "en-US", "ja-JP")
 
         Returns:
-            DeepL language code (e.g., "EN-US", "JA")
+            DeepL source language code (e.g., "EN", "JA", "ZH")
+        """
+        # Get the mapped code
+        deepl_lang = self.LOCALE_MAP.get(locale)
+
+        if not deepl_lang:
+            # Fallback: use first 2 characters uppercase
+            deepl_lang = locale[:2].upper()
+            logger.warning(
+                f"Locale {locale} not in DeepL map, using fallback: {deepl_lang}"
+            )
+
+        # For source_lang, strip variant suffix (EN-US → EN, PT-BR → PT)
+        # DeepL only accepts base codes for source
+        base_code = deepl_lang.split('-')[0]
+        return base_code
+
+    def _map_locale_target(self, locale: str) -> str:
+        """
+        Map our locale code to DeepL TARGET language code.
+
+        DeepL target_lang accepts variant codes (EN-US, EN-GB, PT-BR, etc.)
+        for languages that have variants, and base codes for others.
+
+        Args:
+            locale: Our locale code (e.g., "en-US", "ja-JP")
+
+        Returns:
+            DeepL target language code (e.g., "EN-US", "JA", "PT-BR")
         """
         deepl_lang = self.LOCALE_MAP.get(locale)
 
@@ -295,6 +329,7 @@ class DeepLTranslationProvider:
                 f"Locale {locale} not in DeepL map, using fallback: {deepl_lang}"
             )
 
+        # For target_lang, keep the full variant code (EN-US, PT-BR, etc.)
         return deepl_lang
 
     async def get_usage(self):

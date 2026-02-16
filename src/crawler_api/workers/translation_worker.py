@@ -101,6 +101,63 @@ async def create_missing_canonical_translations():
     return created_count
 
 
+async def create_missing_additional_locale_translations():
+    """
+    Create pending translations for enabled_locales (e.g., zh-Hans).
+
+    Feature A (from /tmp/t3):
+    - Supports bidirectional translation (en-US ↔ zh-Hans)
+    - Creates translations for all enabled_locales beyond canonical en-US
+    - Skip if original_locale matches target locale (already native)
+    """
+    settings = await sync_to_async(TranslationSettings.get_settings)()
+
+    if not settings.translation_enabled:
+        return 0
+
+    enabled_locales = settings.enabled_locales or []
+    if not enabled_locales:
+        logger.debug("No additional locales enabled, skipping")
+        return 0
+
+    total_created = 0
+
+    for target_locale in enabled_locales:
+        # Find items without this locale translation
+        # - original_locale != target_locale (skip if already native)
+        # - No existing translation for this locale
+        items_needing_translation = await sync_to_async(list)(
+            TrendItem.objects.exclude(
+                original_locale=target_locale
+            ).exclude(
+                translations__locale=target_locale
+            )[:100]  # Batch size per locale
+        )
+
+        created_count = 0
+        for item in items_needing_translation:
+            try:
+                # Create pending translation
+                await sync_to_async(TrendItemTranslation.objects.create)(
+                    item=item,
+                    locale=target_locale,
+                    title='',  # Will be filled by translation
+                    description='',
+                    status='pending',
+                    provider=settings.default_provider
+                )
+                created_count += 1
+            except django.db.utils.IntegrityError:
+                # Already exists (race condition)
+                continue
+
+        if created_count > 0:
+            logger.info(f"Created {created_count} pending {target_locale} translation(s)")
+            total_created += created_count
+
+    return total_created
+
+
 async def process_pending_translations(batch_size: int = 10):
     """
     Process pending translations.
@@ -284,25 +341,33 @@ async def run_worker_loop():
     """
     Main worker loop.
 
-    From REQUIREMENTS-MASTER.md:
+    From REQUIREMENTS-MASTER.md + Feature A (from /tmp/t3):
     1. Create missing canonical translations (canonical-first priority)
-    2. Process pending translations
-    3. Sleep TRANSLATION_WORKER_POLL_INTERVAL
-    4. Repeat forever (worker never crashes)
+    2. Create missing additional locale translations (zh-Hans, etc.)
+    3. Process pending translations
+    4. Sleep TRANSLATION_WORKER_POLL_INTERVAL
+    5. Repeat forever (worker never crashes)
     """
     logger.info("Translation worker started")
     logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}")
 
     while True:
         try:
-            # 1. Create missing canonical translations
-            created = await create_missing_canonical_translations()
+            # 1. Create missing canonical translations (en-US) - canonical-first priority
+            created_canonical = await create_missing_canonical_translations()
 
-            # 2. Process pending translations
+            # 2. Create missing additional locale translations (zh-Hans, etc.)
+            created_additional = await create_missing_additional_locale_translations()
+
+            # 3. Process pending translations
             processed = await process_pending_translations(batch_size=10)
 
-            if created > 0 or processed > 0:
-                logger.info(f"Created: {created}, Processed: {processed}")
+            if created_canonical > 0 or created_additional > 0 or processed > 0:
+                logger.info(
+                    f"Created canonical: {created_canonical}, "
+                    f"Created additional: {created_additional}, "
+                    f"Processed: {processed}"
+                )
 
         except Exception as e:
             # Never crash the worker loop

@@ -75,12 +75,14 @@ class TrendSurface(models.Model):
         ('sampler', 'Feed Sampler'),         # Algorithmic feed samples
         ('search', 'Search Trends'),         # Search spike/rank pages
         ('news', 'News Top Stories'),        # News portal rankings
+        ('rss_feed', 'RSS Feed'),            # Generic RSS feeds (Feature B)
     ]
 
     # Bucket choices for feed diversity (from /tmp/t9)
     BUCKET_CHOICES = [
         ('hot_now', 'Hot Now'),                          # Major trending content
         ('rising', 'Rising'),                            # New gaining traction
+        ('news', 'News'),                                # General news content (Feature B)
         ('category_tech', 'Tech'),                       # Technology, gadgets
         ('category_sports', 'Sports'),                   # Sports, games
         ('category_entertainment', 'Entertainment'),     # Movies, TV, music
@@ -317,6 +319,8 @@ class TrendItemTranslation(models.Model):
     PROVIDER_CHOICES = [
         ('deepl', 'DeepL'),
         ('openai', 'OpenAI'),
+        ('argostranslate', 'Argostranslate (Offline)'),
+        ('none', 'No Translation (English variants)'),
     ]
 
     item = models.ForeignKey(
@@ -346,6 +350,8 @@ class TrendItemTranslation(models.Model):
     provider = models.CharField(
         max_length=20,
         choices=PROVIDER_CHOICES,
+        null=True,
+        blank=True,
         help_text="Which translation API was used"
     )
     error_message = models.TextField(
@@ -386,6 +392,8 @@ class TranslationSettings(models.Model):
     PROVIDER_CHOICES = [
         ('deepl', 'DeepL'),
         ('openai', 'OpenAI'),
+        ('argostranslate', 'Argostranslate (Offline)'),
+        ('none', 'No Translation (English variants)'),
     ]
 
     translation_enabled = models.BooleanField(

@@ -877,6 +877,57 @@ restore_database() {
     fi
 }
 
+run_migrations() {
+    print_header "Run Database Migrations"
+
+    # Check if database exists
+    if [ ! -f "$DB_FILE" ]; then
+        print_error "Database not found"
+        print_info "Run option 10 (First-Time Setup) first"
+        return 1
+    fi
+
+    print_info "This will apply any pending database migrations"
+    print_info "Migrations update the database schema without losing data"
+    echo ""
+
+    # Show pending migrations
+    print_step "Checking for pending migrations..."
+    cd "$SCRIPT_DIR"
+
+    local pending_output=$(python3 manage.py showmigrations --plan 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError" | grep "\[ \]")
+
+    if [ -z "$pending_output" ]; then
+        print_success "No pending migrations - database is up to date"
+        echo ""
+        return 0
+    fi
+
+    echo "Pending migrations:"
+    echo "$pending_output"
+    echo ""
+
+    confirm_action "Apply these migrations?" || return 1
+
+    # Stop services for safety
+    print_step "Stopping services..."
+    stop_all_services
+
+    # Run migrations
+    print_step "Running migrations..."
+    python3 manage.py migrate
+
+    if [ $? -eq 0 ]; then
+        print_success "Migrations applied successfully"
+        echo ""
+        print_info "Services were stopped. Restart them with option 2 or 4"
+        echo ""
+    else
+        print_error "Migration failed. Check errors above."
+        return 1
+    fi
+}
+
 reset_database() {
     print_header "Reset Database"
 
@@ -1297,15 +1348,16 @@ EOF
     echo -e "${BOLD}Database Operations:${NC}"
     echo "  13) Backup Database"
     echo "  14) Restore Database"
-    echo "  15) Reset Database (destructive!)"
+    echo "  15) Run Migrations"
+    echo "  16) Reset Database (destructive!)"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
-    echo "  16) Run Tests"
+    echo "  17) Run Tests"
     echo ""
 
     echo -e "${BOLD}Migration:${NC}"
-    echo "  17) Setup Migrated Collectors (15 new sources)"
+    echo "  18) Setup Migrated Collectors (15 new sources)"
     echo ""
 
     echo "  0)  Exit"
@@ -1333,9 +1385,10 @@ main_loop() {
             12) update_dependencies ;;
             13) backup_database ;;
             14) restore_database ;;
-            15) reset_database ;;
-            16) run_tests ;;
-            17) setup_migrated_collectors ;;
+            15) run_migrations ;;
+            16) reset_database ;;
+            17) run_tests ;;
+            18) setup_migrated_collectors ;;
             0)
                 echo ""
                 print_info "Exiting..."
@@ -1390,6 +1443,9 @@ if [ $# -gt 0 ]; then
         backup)
             backup_database
             ;;
+        migrate-db)
+            run_migrations
+            ;;
         migrate)
             setup_migrated_collectors
             ;;
@@ -1397,7 +1453,7 @@ if [ $# -gt 0 ]; then
             show_how_it_works
             ;;
         *)
-            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate|info]"
+            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate-db|migrate|info]"
             echo "Or run without arguments for interactive menu"
             exit 1
             ;;

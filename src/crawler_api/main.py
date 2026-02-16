@@ -14,7 +14,9 @@ Configuration is done via Django Admin.
 import os
 import sys
 import base64
-from typing import List, Optional
+import json
+import logging
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Query
@@ -38,6 +40,9 @@ from crawler_admin.models import (
     TrendItemTranslation,
     CrawlRun
 )
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -105,6 +110,11 @@ class TrendItemResponse(BaseModel):
     - canonical_description: Translated English description
     - rank_position: Position in ranking (important!)
     - engagement_signals: Platform engagement metrics
+
+    Feature A (from /tmp/t3):
+    - display_title: Title in requested language (lang parameter)
+    - display_description: Description in requested language
+    - Falls back to canonical if translation unavailable
     """
     id: int
     region_key: str
@@ -120,6 +130,10 @@ class TrendItemResponse(BaseModel):
     # Canonical (English) content
     canonical_title: str
     canonical_description: Optional[str]
+
+    # Display content (localized based on lang parameter)
+    display_title: str
+    display_description: Optional[str]
 
     # Ranking & engagement
     rank_position: Optional[int]
@@ -225,30 +239,140 @@ async def list_surfaces(
     ]
 
 
+def _has_complete_translation(item, locale: str) -> bool:
+    """
+    Check if a TrendItem has a complete translation for the given locale.
+
+    Helper function for filtering items by translation status.
+    Used by chunk-based scanning for zh-Hans requests (from /tmp/t4).
+    """
+    for trans in item.translations.all():
+        if trans.locale == locale and trans.status == 'complete':
+            return True
+    return False
+
+
+async def _fetch_zh_hans_items(
+    queryset,
+    limit: int
+) -> Tuple[List[Any], bool, Dict[str, Any], Optional[int]]:
+    """
+    Fetch items with complete zh-Hans translation using chunk-based scanning.
+
+    From /tmp/t4:
+    - Scan candidates in chunks until we have enough translated items
+    - Only return items with complete zh-Hans translation (no fallback)
+    - Stop when: collected >= limit OR scanned >= max_scan_limit
+
+    Returns:
+        (items, has_more, scan_metrics, last_scanned_id)
+        - items: List of TrendItem objects with zh-Hans translation
+        - has_more: Boolean indicating if more items are available
+        - scan_metrics: Dict with scan statistics
+        - last_scanned_id: ID of last scanned item (for cursor advancement)
+    """
+    CHUNK_SIZE = 250  # Scan in chunks of 250 (5x typical limit)
+    MAX_SCAN_LIMIT = 2000  # Stop after scanning 2000 candidates
+
+    collected_items = []
+    scanned_count = 0
+    max_scan_reached = False
+    last_scanned_id = None
+
+    while len(collected_items) < limit and scanned_count < MAX_SCAN_LIMIT:
+        # Fetch next chunk
+        chunk = await sync_to_async(list)(
+            queryset[scanned_count:scanned_count + CHUNK_SIZE]
+        )
+
+        if not chunk:
+            # No more items available
+            break
+
+        # Filter items with complete zh-Hans translation
+        for item in chunk:
+            scanned_count += 1
+            last_scanned_id = item.id  # Track last scanned item for cursor
+
+            # Check if item has complete zh-Hans translation OR is native Chinese
+            has_zh_hans = (
+                item.original_locale.startswith('zh') or
+                _has_complete_translation(item, 'zh-Hans')
+            )
+
+            if has_zh_hans:
+                collected_items.append(item)
+
+                # Stop if we have enough items
+                if len(collected_items) >= limit:
+                    break
+
+        # Stop if chunk was smaller than expected (end of data)
+        if len(chunk) < CHUNK_SIZE:
+            break
+
+    # Check if there are more items by looking ahead
+    has_more = False
+    if scanned_count < MAX_SCAN_LIMIT:
+        # Try to fetch one more item
+        peek = await sync_to_async(list)(queryset[scanned_count:scanned_count + 1])
+        has_more = len(peek) > 0
+    else:
+        max_scan_reached = True
+        # Assume more items exist if we hit scan limit
+        has_more = True
+
+    # Calculate metrics
+    ready_rate = (len(collected_items) / scanned_count * 100) if scanned_count > 0 else 0.0
+
+    scan_metrics = {
+        'scanned': scanned_count,
+        'returned': len(collected_items),
+        'ready_rate': ready_rate,
+        'max_scan_reached': max_scan_reached
+    }
+
+    return collected_items, has_more, scan_metrics, last_scanned_id
+
+
 @app.get("/api/v1/trends", response_model=CursorTrendResponse)
 async def list_trends(
     region: Optional[str] = Query(None, description="Filter by region key"),
     bucket: Optional[str] = Query(None, description="Filter by bucket"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
-    limit: int = Query(50, ge=1, le=200, description="Number of items to return (hint)")
+    limit: int = Query(50, ge=1, le=200, description="Number of items to return (hint)"),
+    lang: str = Query("en-US", description="Language for display content (en-US|zh-Hans)")
 ):
     """
-    Get trend items with canonical (English) translations (cursor-based pagination).
+    Get trend items with translations (cursor-based pagination).
 
     From REQUIREMENTS-MASTER.md:
     - GET /api/v1/trends?region=xx&bucket=yy&cursor=xxx&limit=50
     - Returns items with canonical_title (from /tmp/t4)
     - Uses cursor-based pagination for infinite scroll
 
+    Feature A (from /tmp/t3):
+    - lang parameter: en-US (default) or zh-Hans
+    - display_title/display_description in requested language
+    - Falls back to canonical (en-US) if translation unavailable for en-US
+
+    Feature t4 (from /tmp/t4):
+    - lang=zh-Hans: ONLY returns items with complete zh-Hans translation
+    - Uses chunk-based overfetching to ensure enough results
+    - No fallback to English for zh-Hans (strict filtering)
+
     Product constraint (from /tmp/t9):
     - rank_position is important metadata
     - engagement_signals show platform metrics
 
     Cursor Pagination:
-    - cursor: Opaque cursor string (base64-encoded last item ID)
+    - cursor: Opaque cursor string (base64-encoded)
+    - For en-US: Simple ID encoding
+    - For zh-Hans: JSON encoding with scan state
     - limit: Number of items to return (max 200, hint only - backend may return fewer)
     - Returns next_cursor for fetching more items
     """
+    # Build base queryset
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
         'translations'
     ).order_by('-collected_at', '-id')  # Secondary sort by ID for stability
@@ -259,38 +383,61 @@ async def list_trends(
     if bucket:
         queryset = queryset.filter(bucket=bucket)
 
-    # Filter: Only include items that are either originally English
-    # or have a completed en-US translation
-    queryset = queryset.filter(
-        Q(original_locale='en-US') |
-        Q(translations__locale='en-US', translations__status='complete')
-    ).distinct()
-
     # Apply cursor filter
+    cursor_id = None
     if cursor:
         try:
-            cursor_id = int(base64.b64decode(cursor).decode('utf-8'))
-            queryset = queryset.filter(id__lt=cursor_id)
-        except (ValueError, Exception):
-            # Invalid cursor, ignore it
-            pass
+            # Try to decode as JSON first (zh-Hans format)
+            cursor_data = json.loads(base64.b64decode(cursor).decode('utf-8'))
+            cursor_id = cursor_data.get('id')
+        except (ValueError, json.JSONDecodeError):
+            # Fall back to simple ID encoding (en-US format)
+            try:
+                cursor_id = int(base64.b64decode(cursor).decode('utf-8'))
+            except (ValueError, Exception):
+                # Invalid cursor, ignore it
+                cursor_id = None
 
-    # Fetch limit + 1 to check if there are more items
-    items = await sync_to_async(list)(queryset[:limit + 1])
+    if cursor_id:
+        queryset = queryset.filter(id__lt=cursor_id)
 
-    # Check if there are more items
-    has_more = len(items) > limit
-    if has_more:
-        items = items[:limit]  # Trim to limit
+    # FEATURE t4: Different behavior for zh-Hans vs en-US
+    last_scanned_id = None
+    if lang == 'zh-Hans':
+        # Chunk-based scanning for zh-Hans: ONLY return items with complete translation
+        # No fallback to English - strict filtering
+        items, has_more, scan_metrics, last_scanned_id = await _fetch_zh_hans_items(queryset, limit)
+
+        # Log scan metrics
+        logger.info(
+            f"[zh-Hans] scanned={scan_metrics['scanned']} "
+            f"returned={scan_metrics['returned']} "
+            f"ready_rate={scan_metrics['ready_rate']:.1f}% "
+            f"max_scan_reached={scan_metrics['max_scan_reached']}"
+        )
+    else:
+        # Standard behavior for en-US: include all items, use fallback
+        # Fetch limit + 1 to check if there are more items
+        items = await sync_to_async(list)(queryset[:limit + 1])
+
+        # Check if there are more items
+        has_more = len(items) > limit
+        if has_more:
+            items = items[:limit]  # Trim to limit
+
+        scan_metrics = None
 
     results = []
     for item in items:
         # Get canonical (en-US) translation
         canonical_translation = None
+        requested_lang_translation = None
+
         for trans in item.translations.all():
             if trans.locale == 'en-US' and trans.status == 'complete':
                 canonical_translation = trans
-                break
+            if trans.locale == lang and trans.status == 'complete':
+                requested_lang_translation = trans
 
         # Use canonical if available, otherwise original
         # Note: All items reaching this point are guaranteed to be either
@@ -302,6 +449,21 @@ async def list_trends(
             # Original is already English (no else case needed - filtered at DB)
             canonical_title = item.title_original
             canonical_description = item.description_original
+
+        # Feature A: Populate display fields based on lang parameter
+        # Fallback hierarchy: requested_lang → original (if matches) → canonical (en-US)
+        if requested_lang_translation:
+            # Requested language translation available
+            display_title = requested_lang_translation.title
+            display_description = requested_lang_translation.description
+        elif item.original_locale == lang:
+            # Original content is in requested language
+            display_title = item.title_original
+            display_description = item.description_original
+        else:
+            # Fallback to canonical (en-US)
+            display_title = canonical_title
+            display_description = canonical_description
 
         results.append(
             TrendItemResponse(
@@ -315,6 +477,8 @@ async def list_trends(
                 url=item.url,
                 canonical_title=canonical_title,
                 canonical_description=canonical_description,
+                display_title=display_title,
+                display_description=display_description,
                 rank_position=item.rank_position,
                 engagement_signals=item.engagement_signals,
                 published_at=item.published_at,
@@ -325,8 +489,22 @@ async def list_trends(
     # Generate next cursor
     next_cursor = None
     if has_more and items:
-        last_item_id = items[-1].id
-        next_cursor = base64.b64encode(str(last_item_id).encode('utf-8')).decode('utf-8')
+        if lang == 'zh-Hans' and last_scanned_id:
+            # For zh-Hans: encode last scanned ID (not last returned ID)
+            # This ensures cursor advances past all scanned items, not just returned ones
+            cursor_data = {
+                'id': last_scanned_id,
+                'lang': 'zh-Hans'
+            }
+            next_cursor = base64.b64encode(
+                json.dumps(cursor_data).encode('utf-8')
+            ).decode('utf-8')
+        else:
+            # For en-US: simple ID encoding (last returned item)
+            last_item_id = items[-1].id
+            next_cursor = base64.b64encode(
+                str(last_item_id).encode('utf-8')
+            ).decode('utf-8')
 
     return CursorTrendResponse(
         items=results,
@@ -389,6 +567,10 @@ async def translation_health():
 
     From REQUIREMENTS-MASTER.md (from /tmp/t8):
     GET /api/v1/health/translation - Shows translation queue metrics
+
+    Feature A (from /tmp/t3):
+    - Per-locale breakdown (pending, complete, failed)
+    - Last processed timestamp
     """
     # Count items missing canonical en-US translation
     missing_canonical_count = await sync_to_async(
@@ -410,10 +592,47 @@ async def translation_health():
         TrendItemTranslation.objects.filter(status='failed').count
     )()
 
+    # Feature A: Per-locale breakdown
+    # Get all unique locales in TrendItemTranslation
+    all_locales = await sync_to_async(list)(
+        TrendItemTranslation.objects.values_list('locale', flat=True).distinct()
+    )
+
+    per_locale_stats = {}
+    for locale in all_locales:
+        pending = await sync_to_async(
+            TrendItemTranslation.objects.filter(locale=locale, status='pending').count
+        )()
+        complete = await sync_to_async(
+            TrendItemTranslation.objects.filter(locale=locale, status='complete').count
+        )()
+        failed = await sync_to_async(
+            TrendItemTranslation.objects.filter(locale=locale, status='failed').count
+        )()
+
+        per_locale_stats[locale] = {
+            "pending": pending,
+            "complete": complete,
+            "failed": failed
+        }
+
+    # Get last processed timestamp (most recent completed translation)
+    last_translation = await sync_to_async(
+        lambda: TrendItemTranslation.objects.filter(
+            status='complete'
+        ).order_by('-translated_at').first()
+    )()
+
+    last_processed_at = None
+    if last_translation and last_translation.translated_at:
+        last_processed_at = last_translation.translated_at.isoformat()
+
     return {
         "missing_canonical_en_count": missing_canonical_count,
         "pending_count": pending_count,
-        "failed_count": failed_count
+        "failed_count": failed_count,
+        "per_locale": per_locale_stats,
+        "last_processed_at": last_processed_at
     }
 
 
