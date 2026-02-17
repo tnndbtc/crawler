@@ -179,6 +179,7 @@ async def process_display_translations(
     title_field = f'display_title_{locale_suffix}'
     description_field = f'display_description_{locale_suffix}'
     engine_field = f'display_engine_{locale_suffix}'
+    error_field = f'display_error_{locale_suffix}'
 
     # Check if fields exist
     if not hasattr(TrendItem, status_field):
@@ -214,6 +215,7 @@ async def process_display_translations(
                 setattr(item, description_field, result.description)
                 setattr(item, status_field, 'complete')
                 setattr(item, engine_field, result.engine)
+                setattr(item, error_field, None)
 
                 logger.info(
                     f"✅ Display ({target_locale}) translated: item #{item.id} | "
@@ -229,6 +231,7 @@ async def process_display_translations(
             else:
                 setattr(item, status_field, 'failed')
                 setattr(item, engine_field, result.engine)
+                setattr(item, error_field, result.error)
 
                 logger.warning(
                     f"❌ Display ({target_locale}) failed: item #{item.id} | "
@@ -236,7 +239,7 @@ async def process_display_translations(
                 )
 
             await sync_to_async(item.save)(
-                update_fields=[title_field, description_field, status_field, engine_field]
+                update_fields=[title_field, description_field, status_field, engine_field, error_field]
             )
             processed_count += 1
 
@@ -246,7 +249,8 @@ async def process_display_translations(
                 exc_info=True
             )
             setattr(item, status_field, 'failed')
-            await sync_to_async(item.save)(update_fields=[status_field])
+            setattr(item, error_field, str(e))
+            await sync_to_async(item.save)(update_fields=[status_field, error_field])
 
     return processed_count
 
@@ -534,8 +538,22 @@ async def run_worker_loop():
         await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
 
 
+def _mask_key(key: str) -> str:
+    """Mask API key for safe logging."""
+    if not key:
+        return "(not set)"
+    if len(key) <= 11:
+        return "***"
+    return f"{key[:7]}...{key[-4:]}"
+
+
 def main():
     """Entry point for translation worker."""
+    # Log env vars at startup for debugging
+    openai_key = os.getenv('OPENAI_API_KEY', '')
+    deepl_key = os.getenv('DEEPL_API_KEY', '')
+    logger.info(f"🔑 ENV CHECK: OPENAI_API_KEY={_mask_key(openai_key)}, DEEPL_API_KEY={_mask_key(deepl_key)}")
+
     try:
         asyncio.run(run_worker_loop())
     except KeyboardInterrupt:

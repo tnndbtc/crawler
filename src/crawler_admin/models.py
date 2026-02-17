@@ -350,6 +350,11 @@ class TrendItem(models.Model):
         blank=True,
         help_text="Engine used for zh-Hans translation"
     )
+    display_error_zh_hans = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Error message for zh-Hans display translation"
+    )
 
     class Meta:
         ordering = ['-collected_at']

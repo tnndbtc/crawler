@@ -46,8 +46,7 @@ class OpenAIEngine(BaseTranslationEngine):
     Features:
     - High-quality, context-aware translation
     - Support for 50+ languages
-    - Admin-configurable prompts via PromptTemplate model
-    - Admin-configurable models via LLMModelConfig model
+    - Admin-configurable prompts and model params via LLMModelConfig
     - Retry logic with exponential backoff
     """
 
@@ -91,7 +90,17 @@ class OpenAIEngine(BaseTranslationEngine):
             },
         )
 
-        logger.info(f"Initialized OpenAI engine (model override: {model or 'from config'})")
+        # Log masked API key for debugging
+        masked_key = self._mask_api_key(self.api_key)
+        logger.info(f"Initialized OpenAI engine (model override: {model or 'from config'}, api_key: {masked_key})")
+
+    def _mask_api_key(self, key: str) -> str:
+        """Mask API key for safe logging, showing first 7 and last 4 chars."""
+        if not key:
+            return "(not set)"
+        if len(key) <= 11:
+            return "***"
+        return f"{key[:7]}...{key[-4:]}"
 
     @property
     def name(self) -> str:
@@ -101,9 +110,48 @@ class OpenAIEngine(BaseTranslationEngine):
         """OpenAI GPT supports all language pairs."""
         return True
 
-    def _get_model_config(self) -> tuple:
+    async def _get_llm_model(self, translation_type: str):
         """
-        Get model configuration from database or defaults.
+        Get LLM model config from database based on translation type.
+
+        Args:
+            translation_type: 'canonical' or 'display'
+
+        Returns:
+            LLMModelConfig instance or None
+        """
+        try:
+            from asgiref.sync import sync_to_async
+            from translation.models import TranslationConfig
+
+            @sync_to_async
+            def get_model():
+                config = TranslationConfig.get_config()
+                model = config.get_llm_model(translation_type)
+                if model:
+                    # Pre-fetch all needed attributes while in sync context
+                    return {
+                        'model_id': model.model_id,
+                        'temperature': model.temperature,
+                        'top_p': model.top_p,
+                        'max_tokens': model.max_tokens,
+                        'system_prompt': model.system_prompt,
+                        'developer_prompt': model.developer_prompt,
+                        'user_prompt': model.user_prompt,
+                    }
+                return None
+
+            return await get_model()
+        except Exception as e:
+            logger.warning(f"Failed to load LLM model config: {e}")
+            return None
+
+    def _get_model_params_from_config(self, model_config: Optional[dict]) -> tuple:
+        """
+        Get model parameters from config dict or defaults.
+
+        Args:
+            model_config: Dict with model params or None
 
         Returns:
             (model_id, temperature, top_p, max_tokens)
@@ -111,33 +159,40 @@ class OpenAIEngine(BaseTranslationEngine):
         if self._model_override:
             return (self._model_override, self.DEFAULT_TEMPERATURE, self.DEFAULT_TOP_P, self.DEFAULT_MAX_TOKENS)
 
-        try:
-            from translation.models import LLMModelConfig
-            config = LLMModelConfig.get_default(provider='openai')
-            if config:
-                top_p = getattr(config, 'top_p', self.DEFAULT_TOP_P)
-                return (config.model_id, config.temperature, top_p, config.max_tokens)
-        except Exception as e:
-            logger.warning(f"Failed to load LLM model config: {e}")
+        if model_config:
+            return (
+                model_config['model_id'],
+                model_config['temperature'],
+                model_config['top_p'],
+                model_config['max_tokens']
+            )
 
         return (self.DEFAULT_MODEL, self.DEFAULT_TEMPERATURE, self.DEFAULT_TOP_P, self.DEFAULT_MAX_TOKENS)
 
-    def _get_prompt_template(self, translation_type: str):
+    def _render_prompts(self, model_config: dict, context: dict) -> dict:
         """
-        Get prompt template from database.
+        Render prompts with context variables.
 
         Args:
-            translation_type: 'canonical' or 'display'
+            model_config: Dict with prompt templates
+            context: Dict with variable values
 
         Returns:
-            PromptTemplate instance or None
+            Dict with rendered 'system', 'developer', and 'user' prompts
         """
-        try:
-            from translation.models import PromptTemplate
-            return PromptTemplate.get_default(translation_type)
-        except Exception as e:
-            logger.warning(f"Failed to load prompt template: {e}")
-            return None
+        def substitute(template: str, ctx: dict) -> str:
+            if not template:
+                return ''
+            result = template
+            for key, value in ctx.items():
+                result = result.replace(f'{{{key}}}', str(value) if value else '')
+            return result
+
+        return {
+            'system': substitute(model_config['system_prompt'], context),
+            'developer': substitute(model_config['developer_prompt'], context) if model_config['developer_prompt'] else None,
+            'user': substitute(model_config['user_prompt'], context),
+        }
 
     def _build_messages(
         self,
@@ -145,19 +200,17 @@ class OpenAIEngine(BaseTranslationEngine):
         source_locale: str,
         target_locale: str,
         translation_type: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        model_config: Optional[dict] = None
     ) -> list:
         """
         Build chat messages for translation.
 
-        Uses prompt templates from database if available,
+        Uses prompts from the selected LLMModelConfig if available,
         otherwise falls back to hardcoded prompts.
         """
-        # Try to load template from database
-        template = self._get_prompt_template(translation_type)
-
-        if template:
-            # Build context for template
+        if model_config and model_config.get('system_prompt'):
+            # Build context for prompt rendering
             render_context = {
                 'source_platform': context.get('source_platform', '') if context else '',
                 'region': context.get('region', '') if context else '',
@@ -169,7 +222,7 @@ class OpenAIEngine(BaseTranslationEngine):
                 'target_locale': target_locale,
             }
 
-            rendered = template.render(render_context)
+            rendered = self._render_prompts(model_config, render_context)
 
             messages = [{"role": "system", "content": rendered['system']}]
 
@@ -180,13 +233,12 @@ class OpenAIEngine(BaseTranslationEngine):
 
             return messages
 
-        # Fallback: hardcoded prompts
+        # Fallback: hardcoded prompts (if model config unavailable or has no prompts)
         if translation_type == 'canonical':
             system_prompt = (
-                "You are a semantic normalization translator. "
-                "Translate to English (en-US) preserving exact meaning. "
-                "Normalize formatting for text similarity comparison. "
-                "Output only the translated text, no explanations."
+                "You are a semantic normalization engine. "
+                "Produce stable, literal, machine-consistent English meaning. "
+                "Return only the normalized sentence(s)."
             )
             user_prompt = f"Translate this {source_locale} text to normalized English:\n\n{text}"
         else:
@@ -229,9 +281,12 @@ class OpenAIEngine(BaseTranslationEngine):
         if not text or not text.strip():
             return text
 
-        model_id, temperature, top_p, max_tokens = self._get_model_config()
+        # Fetch model config asynchronously
+        model_config = await self._get_llm_model(translation_type)
+
+        model_id, temperature, top_p, max_tokens = self._get_model_params_from_config(model_config)
         messages = self._build_messages(
-            text, source_locale, target_locale, translation_type, context
+            text, source_locale, target_locale, translation_type, context, model_config
         )
 
         try:
@@ -396,9 +451,12 @@ class OpenAIEngine(BaseTranslationEngine):
         ctx['description'] = description or ''
 
         try:
-            model_id, temperature, top_p, max_tokens = self._get_model_config()
+            # Fetch model config asynchronously
+            model_config = await self._get_llm_model(translation_type)
+
+            model_id, temperature, top_p, max_tokens = self._get_model_params_from_config(model_config)
             messages = self._build_messages(
-                combined, source_locale, target_locale, translation_type, ctx
+                combined, source_locale, target_locale, translation_type, ctx, model_config
             )
 
             result = await self._call_api(messages, model_id, temperature, top_p, max_tokens)

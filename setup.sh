@@ -313,8 +313,12 @@ start_service() {
     print_step "Starting $service_description..."
 
     # Start service in background with nohup
+    # Pass API keys from current environment to child process
     cd "$SCRIPT_DIR"
-    nohup bash -c "$start_command" > "$log_file" 2>&1 &
+    nohup env \
+        OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+        DEEPL_API_KEY="${DEEPL_API_KEY:-}" \
+        bash -c "$start_command" > "$log_file" 2>&1 &
     local pid=$!
 
     # Save PID
@@ -926,32 +930,129 @@ run_migrations() {
     if [ -z "$pending_output" ]; then
         print_success "No pending migrations - database is up to date"
         echo ""
-        return 0
-    fi
-
-    echo "Pending migrations:"
-    echo "$pending_output"
-    echo ""
-
-    confirm_action "Apply these migrations?" || return 1
-
-    # Stop services for safety
-    print_step "Stopping services..."
-    stop_all_services
-
-    # Run migrations
-    print_step "Running migrations..."
-    python3 manage.py migrate
-
-    if [ $? -eq 0 ]; then
-        print_success "Migrations applied successfully"
-        echo ""
-        print_info "Services were stopped. Restart them with option 2 or 4"
-        echo ""
     else
-        print_error "Migration failed. Check errors above."
-        return 1
+        echo "Pending migrations:"
+        echo "$pending_output"
+        echo ""
+
+        confirm_action "Apply these migrations?" || return 1
+
+        # Stop services for safety
+        print_step "Stopping services..."
+        stop_all_services
+
+        # Run migrations
+        print_step "Running migrations..."
+        python3 manage.py migrate
+
+        if [ $? -ne 0 ]; then
+            print_error "Migration failed. Check errors above."
+            return 1
+        fi
+        print_success "Migrations applied successfully"
     fi
+
+    # Seed default LLM models if they don't exist (always runs)
+    print_step "Seeding default LLM models..."
+    python3 manage.py shell << 'SEED_EOF'
+from translation.models import LLMModelConfig, TranslationConfig
+
+# Default prompts
+CANONICAL_SYSTEM = (
+    "You are a semantic normalization engine. Your task is NOT to produce natural English. "
+    "Produce stable, literal, machine-consistent English meaning. Remove jokes, sarcasm, slang, exaggeration. "
+    "Rewrite ambiguity into explicit meaning. Prefer neutral factual wording. Do not add commentary. "
+    "Return only the normalized sentence(s)."
+)
+CANONICAL_DEVELOPER = (
+    "Normalize the following content into canonical English meaning for clustering and ranking. "
+    "Keep topic/subject/object/intent. Remove clickbait, humor, emotional tone. "
+    "Output must be short and consistent."
+)
+CANONICAL_USER = (
+    "Source: {source_platform}\n"
+    "Locale: {original_language}\n"
+    "Title: {title}\n"
+    "Description: {description}"
+)
+
+DISPLAY_SYSTEM = (
+    "You are a professional multilingual news translator. "
+    "Translate naturally for native readers. Keep original meaning and tone. "
+    "Preserve proper nouns. Do not summarize. Do not explain. Return only the translation."
+)
+DISPLAY_DEVELOPER = (
+    "Translate into {target_locale} for user display. Natural wording. Preserve tone. "
+    "Keep names/brands/places accurate. Avoid overly literal phrasing."
+)
+DISPLAY_USER = (
+    "Source: {source_platform}\n"
+    "From: {original_language}\n"
+    "To: {target_locale}\n"
+    "Title: {title}\n"
+    "Description: {description}"
+)
+
+# Create canonical model
+canonical_model, created = LLMModelConfig.objects.get_or_create(
+    name='GPT-4o-mini Canonical',
+    defaults={
+        'provider': 'openai',
+        'model_id': 'gpt-4o-mini',
+        'temperature': 0.3,
+        'top_p': 1.0,
+        'max_tokens': 1000,
+        'system_prompt': CANONICAL_SYSTEM,
+        'developer_prompt': CANONICAL_DEVELOPER,
+        'user_prompt': CANONICAL_USER,
+        'enabled': True,
+        'is_default': False,
+    }
+)
+if created:
+    print(f"Created: {canonical_model.name}")
+else:
+    print(f"Already exists: {canonical_model.name}")
+
+# Create display model
+display_model, created = LLMModelConfig.objects.get_or_create(
+    name='GPT-4o-mini Display',
+    defaults={
+        'provider': 'openai',
+        'model_id': 'gpt-4o-mini',
+        'temperature': 0.3,
+        'top_p': 1.0,
+        'max_tokens': 1000,
+        'system_prompt': DISPLAY_SYSTEM,
+        'developer_prompt': DISPLAY_DEVELOPER,
+        'user_prompt': DISPLAY_USER,
+        'enabled': True,
+        'is_default': False,
+    }
+)
+if created:
+    print(f"Created: {display_model.name}")
+else:
+    print(f"Already exists: {display_model.name}")
+
+# Link TranslationConfig to these models
+config = TranslationConfig.get_config()
+updated = False
+if not config.canonical_model:
+    config.canonical_model = canonical_model
+    updated = True
+if not config.display_model:
+    config.display_model = display_model
+    updated = True
+if updated:
+    config.save()
+    print("Linked TranslationConfig to LLM models")
+else:
+    print("TranslationConfig already has LLM models linked")
+SEED_EOF
+
+    print_success "LLM models seeded"
+    echo ""
 }
 
 reset_database() {

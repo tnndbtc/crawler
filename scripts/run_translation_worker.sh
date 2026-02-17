@@ -28,12 +28,26 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # Change to project root
 cd "$PROJECT_ROOT"
 
-# Load environment variables
+# Load environment variables (only if not already set)
 if [ -f .env ]; then
-    echo "Loading environment from .env"
-    set -a
-    source <(grep -E '^[A-Z_]+=.*' .env)
-    set +a
+    echo "Loading environment from .env (preserving existing env vars)"
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$line" ]] && continue
+
+        # Extract key (everything before first =)
+        key="${line%%=*}"
+        # Extract value (everything after first =, strip trailing comments)
+        value="${line#*=}"
+        value="${value%%#*}"        # Remove trailing comments
+        value="${value%"${value##*[![:space:]]}"}"  # Trim trailing whitespace
+
+        # Only set if key is valid and not already defined in environment
+        if [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] && [ -z "${!key:-}" ]; then
+            export "$key=$value"
+        fi
+    done < <(grep -E '^[A-Z_][A-Z0-9_]*=' .env)
 fi
 
 # Activate virtual environment if it exists

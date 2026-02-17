@@ -2,8 +2,8 @@
 Django Admin configuration for translation engine.
 
 Provides admin interfaces for:
-- TranslationConfig: Global translation settings (singleton)
-- LLMModelConfig: LLM model configurations (with embedded Prompt Templates for OpenAI)
+- TranslationConfig: Global translation settings (singleton) with prompts
+- LLMModelConfig: LLM model configurations for OpenAI
 - ProviderHealth: Provider health status with reset actions
 """
 
@@ -16,7 +16,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils import timezone
 
-from .models import TranslationConfig, LLMModelConfig, ProviderHealth, PromptTemplate
+from .models import TranslationConfig, LLMModelConfig, ProviderHealth
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +37,23 @@ class TranslationConfigAdmin(admin.ModelAdmin):
             'fields': ('enable_translation',),
             'description': 'Enable or disable all translation processing'
         }),
-        ('Engine Selection', {
-            'fields': ('canonical_engine', 'display_engine', 'fallback_order'),
+        ('Canonical Translation', {
+            'fields': ('canonical_engine', 'canonical_model'),
             'description': (
-                'Select engines for canonical (en-US for analysis) and display (UI) translations. '
-                'Fallback order is used when primary engine fails.'
+                'Engine and model for canonical (en-US) translations used in ranking/analysis. '
+                'Select an LLM Model when using OpenAI engine.'
             )
         }),
-        ('Production Mode', {
-            'fields': ('production_mode',),
+        ('Display Translation', {
+            'fields': ('display_engine', 'display_model'),
             'description': (
-                'Production mode flag for translation engine selection.'
+                'Engine and model for display translations (human-readable UI). '
+                'Select an LLM Model when using OpenAI engine.'
             )
+        }),
+        ('Fallback & Production', {
+            'fields': ('fallback_order', 'production_mode'),
+            'description': 'Fallback order is used when primary engine fails.'
         }),
         ('Locale Settings', {
             'fields': ('canonical_locale', 'enabled_locales'),
@@ -127,40 +132,13 @@ class TranslationConfigAdmin(admin.ModelAdmin):
             )
 
 
-@admin.register(PromptTemplate)
-class PromptTemplateAdmin(admin.ModelAdmin):
-    """
-    Hidden admin for prompt templates - accessed via LLMModelConfig page.
-    """
-
-    list_display = ['name', 'translation_type', 'is_default', 'active']
-    fieldsets = (
-        ('Template Info', {
-            'fields': ('name', 'translation_type', 'description'),
-        }),
-        ('Prompts', {
-            'fields': ('system_prompt', 'developer_prompt', 'user_prompt_template'),
-        }),
-        ('Status', {
-            'fields': ('active', 'is_default'),
-        }),
-    )
-
-    def has_module_permission(self, request):
-        """Hide from admin index."""
-        return False
-
-
 @admin.register(LLMModelConfig)
 class LLMModelConfigAdmin(admin.ModelAdmin):
     """
     Admin for LLM model configurations.
 
-    Features:
-    - List view with filters
-    - Enable/disable action
-    - Set as default action
-    - Embedded Prompt Templates management for OpenAI provider
+    Each entry is self-contained with model parameters AND prompts.
+    Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display").
     """
 
     list_display = [
@@ -168,30 +146,32 @@ class LLMModelConfigAdmin(admin.ModelAdmin):
         'provider',
         'model_id',
         'temperature',
-        'top_p',
-        'max_tokens',
         'is_default_display',
         'enabled_display',
     ]
     list_filter = ['provider', 'enabled', 'is_default']
     search_fields = ['name', 'model_id', 'description']
-    ordering = ['provider', '-is_default', 'name']
+    ordering = ['provider', 'name']
 
     fieldsets = (
-        ('Model Information', {
-            'fields': ('name', 'provider', 'model_id', 'description')
+        ('Model', {
+            'fields': ('name', 'provider', 'model_id'),
+            'description': 'Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display")'
         }),
         ('Parameters', {
             'fields': ('temperature', 'top_p', 'max_tokens'),
             'description': (
                 'Temperature: 0.0-1.0 (lower = more deterministic). '
-                'Top-p: 0.0-1.0 (nucleus sampling, lower = more focused). '
+                'Top-p: 0.0-1.0 (nucleus sampling). '
                 'Max tokens: Maximum response length.'
             )
         }),
+        ('Prompts', {
+            'fields': ('system_prompt', 'developer_prompt', 'user_prompt'),
+            'description': 'Variables: {source_platform}, {original_language}, {target_locale}, {title}, {description}'
+        }),
         ('Status', {
-            'fields': ('enabled', 'is_default'),
-            'description': 'Only one model per provider can be default.'
+            'fields': ('enabled', 'is_default', 'description'),
         }),
     )
 
@@ -232,25 +212,6 @@ class LLMModelConfigAdmin(admin.ModelAdmin):
             f'Note: Only one default per provider is allowed.'
         )
 
-    def changelist_view(self, request, extra_context=None):
-        """Add prompt templates section to the changelist view."""
-        extra_context = extra_context or {}
-        extra_context['prompt_templates'] = PromptTemplate.objects.all().order_by(
-            'translation_type', '-is_default', 'name'
-        )
-        extra_context['show_prompts_section'] = True
-        return super().changelist_view(request, extra_context)
-
-    def change_view(self, request, object_id, form_url='', extra_context=None):
-        """Add prompt templates section to the change view for OpenAI models."""
-        extra_context = extra_context or {}
-        obj = self.get_object(request, object_id)
-        if obj and obj.provider == 'openai':
-            extra_context['prompt_templates'] = PromptTemplate.objects.all().order_by(
-                'translation_type', '-is_default', 'name'
-            )
-            extra_context['show_prompts_section'] = True
-        return super().change_view(request, object_id, form_url, extra_context)
 
 
 @admin.register(ProviderHealth)

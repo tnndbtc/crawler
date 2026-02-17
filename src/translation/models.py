@@ -2,9 +2,8 @@
 Django models for translation engine configuration.
 
 Models:
-- TranslationConfig: Global translation settings (singleton)
+- TranslationConfig: Global translation settings (singleton) with embedded prompts
 - LLMModelConfig: LLM model configurations for OpenAI engine
-- PromptTemplate: Admin-editable prompts for LLM translations
 - ProviderHealth: Track health status of translation providers
 """
 
@@ -45,6 +44,24 @@ class TranslationConfig(models.Model):
         default=list,
         blank=True,
         help_text="Ordered list of fallback engines: ['deepl', 'openai']"
+    )
+
+    # LLM Model selection (only used when engine is OpenAI)
+    canonical_model = models.ForeignKey(
+        'LLMModelConfig',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='canonical_configs',
+        help_text="LLM model to use for canonical translations (when OpenAI is selected)"
+    )
+    display_model = models.ForeignKey(
+        'LLMModelConfig',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='display_configs',
+        help_text="LLM model to use for display translations (when OpenAI is selected)"
     )
 
     # Feature flags
@@ -146,12 +163,47 @@ class TranslationConfig(models.Model):
 
         return engines
 
+    def get_llm_model(self, translation_type: str) -> 'LLMModelConfig':
+        """
+        Get the LLM model config for the given translation type.
+
+        Args:
+            translation_type: 'canonical' or 'display'
+
+        Returns:
+            LLMModelConfig instance or None
+        """
+        if translation_type == 'canonical':
+            return self.canonical_model
+        else:
+            return self.display_model
+
+    def render_prompts(self, translation_type: str, context: dict) -> dict:
+        """
+        Render prompts with context variables for LLM-based translation.
+
+        Delegates to the selected LLMModelConfig for the translation type.
+
+        Args:
+            translation_type: 'canonical' or 'display'
+            context: Dict with variable values
+
+        Returns:
+            Dict with rendered 'system', 'developer', and 'user' prompts,
+            or None if no model is configured
+        """
+        model = self.get_llm_model(translation_type)
+        if model:
+            return model.render_prompts(context)
+        return None
+
 
 class LLMModelConfig(models.Model):
     """
     LLM model configuration for OpenAI engine.
 
-    Allows admin to configure multiple models with different settings.
+    Each entry is self-contained with model parameters AND prompts.
+    Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display").
     """
 
     PROVIDER_CHOICES = [
@@ -160,9 +212,9 @@ class LLMModelConfig(models.Model):
     ]
 
     name = models.CharField(
-        max_length=50,
+        max_length=100,
         unique=True,
-        help_text="Human-readable name (e.g., 'GPT-4o Mini')"
+        help_text="Human-readable name (e.g., 'GPT-4o-mini Canonical', 'GPT-4o-mini Display')"
     )
     provider = models.CharField(
         max_length=20,
@@ -174,6 +226,8 @@ class LLMModelConfig(models.Model):
         max_length=100,
         help_text="Model identifier (e.g., 'gpt-4o-mini', 'claude-3-haiku')"
     )
+
+    # Model parameters
     temperature = models.FloatField(
         default=0.3,
         help_text="Sampling temperature (0.0-1.0, lower = more deterministic)"
@@ -186,6 +240,25 @@ class LLMModelConfig(models.Model):
         default=1000,
         help_text="Maximum tokens in response"
     )
+
+    # Prompts
+    system_prompt = models.TextField(
+        blank=True,
+        default='',
+        help_text="System prompt (defines AI behavior)"
+    )
+    developer_prompt = models.TextField(
+        blank=True,
+        default='',
+        help_text="Developer prompt (additional instructions)"
+    )
+    user_prompt = models.TextField(
+        blank=True,
+        default='',
+        help_text="User prompt template. Variables: {source_platform}, {original_language}, {target_locale}, {title}, {description}"
+    )
+
+    # Status
     enabled = models.BooleanField(
         default=True,
         help_text="Whether this model is available for use"
@@ -241,95 +314,24 @@ class LLMModelConfig(models.Model):
 
         return model
 
-
-class PromptTemplate(models.Model):
-    """
-    Admin-editable prompt templates for LLM-based translation.
-
-    Supports variable substitution:
-    - {source_platform}: Platform name (reddit, youtube, etc.)
-    - {region}: Region key (us, jp, kr, etc.)
-    - {original_language}: Source locale
-    - {title}: Original title
-    - {description}: Original description
-    - {text}: Text to translate
-    - {source_locale}: Source locale code
-    - {target_locale}: Target locale code
-    """
-
-    TRANSLATION_TYPE_CHOICES = [
-        ('canonical', 'Canonical (Semantic Normalization)'),
-        ('display', 'Display (Human-Readable)'),
-    ]
-
-    name = models.CharField(
-        max_length=100,
-        unique=True,
-        help_text="Template name for identification"
-    )
-    translation_type = models.CharField(
-        max_length=20,
-        choices=TRANSLATION_TYPE_CHOICES,
-        help_text="Type of translation this template is for"
-    )
-    system_prompt = models.TextField(
-        help_text="System role message (defines translator behavior)"
-    )
-    developer_prompt = models.TextField(
-        blank=True,
-        help_text="Developer role message (optional, for additional instructions)"
-    )
-    user_prompt_template = models.TextField(
-        help_text="User message template with {variables}"
-    )
-    description = models.TextField(
-        blank=True,
-        help_text="Notes about when to use this template"
-    )
-    active = models.BooleanField(
-        default=True,
-        help_text="Whether this template is available for use"
-    )
-    is_default = models.BooleanField(
-        default=False,
-        help_text="Use this template as default for its translation type"
-    )
-
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Prompt Template"
-        verbose_name_plural = "Prompt Templates"
-        ordering = ['translation_type', 'name']
-
-    def __str__(self):
-        status = "active" if self.active else "inactive"
-        default = " (default)" if self.is_default else ""
-        return f"{self.name} [{self.translation_type}] - {status}{default}"
-
-    def save(self, *args, **kwargs):
-        """Ensure only one default template per type."""
-        if self.is_default:
-            # Clear other defaults for this type
-            PromptTemplate.objects.filter(
-                translation_type=self.translation_type,
-                is_default=True
-            ).exclude(pk=self.pk).update(is_default=False)
-        super().save(*args, **kwargs)
-
-    def render(self, context: dict) -> dict:
+    def render_prompts(self, context: dict) -> dict:
         """
         Render prompts with context variables.
 
         Args:
-            context: Dict with variable values
+            context: Dict with variable values:
+                - source_platform: Platform name (reddit, youtube, etc.)
+                - original_language: Source locale code
+                - target_locale: Target locale code (for display)
+                - title: Original title
+                - description: Original description
 
         Returns:
-            Dict with rendered system, developer, and user prompts
+            Dict with rendered 'system', 'developer', and 'user' prompts
         """
         def substitute(template: str, ctx: dict) -> str:
+            if not template:
+                return ''
             result = template
             for key, value in ctx.items():
                 result = result.replace(f'{{{key}}}', str(value) if value else '')
@@ -338,77 +340,8 @@ class PromptTemplate(models.Model):
         return {
             'system': substitute(self.system_prompt, context),
             'developer': substitute(self.developer_prompt, context) if self.developer_prompt else None,
-            'user': substitute(self.user_prompt_template, context),
+            'user': substitute(self.user_prompt, context),
         }
-
-    @classmethod
-    def get_default(cls, translation_type: str) -> 'PromptTemplate':
-        """Get default template for translation type."""
-        template = cls.objects.filter(
-            translation_type=translation_type,
-            is_default=True,
-            active=True
-        ).first()
-
-        if not template:
-            # Fallback to any active template
-            template = cls.objects.filter(
-                translation_type=translation_type,
-                active=True
-            ).first()
-
-        return template
-
-    @classmethod
-    def create_defaults(cls):
-        """Create default prompt templates if they don't exist."""
-        # Canonical template (semantic normalization)
-        canonical, _ = cls.objects.get_or_create(
-            name='Default Canonical',
-            defaults={
-                'translation_type': 'canonical',
-                'system_prompt': (
-                    "You are a semantic normalization translator. "
-                    "Translate to English (en-US) preserving exact meaning. "
-                    "Normalize formatting for text similarity comparison. "
-                    "Output only the translated text, no explanations."
-                ),
-                'developer_prompt': '',
-                'user_prompt_template': (
-                    "Translate this {original_language} text from {source_platform} ({region}) "
-                    "to normalized English:\n\n"
-                    "Title: {title}\n"
-                    "Description: {description}"
-                ),
-                'description': 'Default template for canonical translations (semantic normalization for analysis)',
-                'active': True,
-                'is_default': True,
-            }
-        )
-
-        # Display template (human-readable)
-        display, _ = cls.objects.get_or_create(
-            name='Default Display',
-            defaults={
-                'translation_type': 'display',
-                'system_prompt': (
-                    "You are a professional translator. "
-                    "Translate naturally while preserving tone and cultural nuances. "
-                    "Output only the translated text, no explanations."
-                ),
-                'developer_prompt': '',
-                'user_prompt_template': (
-                    "Translate this {original_language} content to {target_locale}:\n\n"
-                    "Title: {title}\n"
-                    "Description: {description}"
-                ),
-                'description': 'Default template for display translations (human-readable UI)',
-                'active': True,
-                'is_default': True,
-            }
-        )
-
-        return canonical, display
 
 
 class ProviderHealth(models.Model):
