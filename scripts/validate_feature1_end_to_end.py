@@ -40,6 +40,7 @@ from django.db import connection
 from django.db.models import Count, Q
 from django.utils import timezone
 from crawler_admin.models import TrendItem, ItemDerivation, SystemSettings
+from shared.language_detection import locale_to_lang_group
 
 
 def print_section_header(section_num: int, title: str):
@@ -155,13 +156,14 @@ def validate_system_settings() -> bool:
         'translation_small_bucket_min': (int,),
         'translation_small_bucket_max': (int,),
         'translation_target_locales': (list,),
-        'translation_source_langs': (list,),
+        'translation_source_langs': (list, type(None)),  # Allow None for all languages
     }
 
     for setting_key, expected_types in required_settings.items():
         value = SystemSettings.get_setting(setting_key)
 
-        if value is None:
+        # Special case: translation_source_langs can be None or empty list (meaning ALL languages)
+        if value is None and type(None) not in expected_types:
             print_result(False, f"Setting missing: {setting_key}")
             all_passed = False
         else:
@@ -170,7 +172,12 @@ def validate_system_settings() -> bool:
                 print_result(False, f"Setting has wrong type: {setting_key} = {value} (expected {expected_types})")
                 all_passed = False
             else:
-                print_result(True, f"Setting exists: {setting_key} = {value}")
+                # Display empty list or None as 'ALL languages' for translation_source_langs
+                if setting_key == 'translation_source_langs' and (value is None or value == []):
+                    display_value = "[] (ALL languages)" if value == [] else "null (ALL languages)"
+                    print_result(True, f"Setting exists: {setting_key} = {display_value}")
+                else:
+                    print_result(True, f"Setting exists: {setting_key} = {value}")
 
     # Validate translation_hot_percent range
     hot_percent = SystemSettings.get_setting('translation_hot_percent')
@@ -281,8 +288,12 @@ def validate_translation_derivations() -> bool:
     target_locales = SystemSettings.get_setting('translation_target_locales', default=['zh-Hans'])
     source_langs = SystemSettings.get_setting('translation_source_langs', default=['en', 'ja'])
 
+    print_info(f"Settings:")
+    print_info(f"  translation_source_langs: {source_langs if source_langs else 'ALL'}")
+    print_info(f"  translation_target_locales: {target_locales}")
+
     for target_locale in target_locales:
-        print_info(f"Translation sources for {target_locale}:")
+        print_info(f"\nTranslation sources for {target_locale}:")
 
         # Count Source A: ItemDerivation (new pipeline)
         derivation_count = ItemDerivation.objects.filter(
@@ -368,21 +379,36 @@ def validate_translation_derivations() -> bool:
                 print_result(False, f"Found {wrong_lang_group} translations for lang_group=zh (should be skipped)")
                 all_passed = False
 
-        # Check: Translations only for allowed source languages
-        translated_items = TrendItem.objects.filter(
-            derivations__derivation_type='translation',
-            derivations__target_locale=target_locale,
-            derivations__status='complete'
-        ).distinct()
+        # Check: Translations only for allowed source languages (if source_langs is specified)
+        if source_langs and len(source_langs) > 0:
+            translated_items = TrendItem.objects.filter(
+                derivations__derivation_type='translation',
+                derivations__target_locale=target_locale,
+                derivations__status='complete'
+            ).distinct()
 
-        wrong_source_langs = translated_items.exclude(
-            base_lang__in=source_langs
-        ).values_list('base_lang', flat=True).distinct()
+            wrong_source_langs = translated_items.exclude(
+                base_lang__in=source_langs
+            ).values_list('base_lang', flat=True).distinct()
 
-        if not wrong_source_langs:
-            print_result(True, f"All translations are from allowed source languages: {source_langs}")
+            if not wrong_source_langs:
+                print_result(True, f"All translations are from allowed source languages: {source_langs}")
+            else:
+                print_result(False, f"Found translations from disallowed languages: {list(wrong_source_langs)}")
+                all_passed = False
         else:
-            print_result(False, f"Found translations from disallowed languages: {list(wrong_source_langs)}")
+            print_skip("source_langs is [] (ALL languages) - skipping source language restriction check")
+
+        # Check: No same-language translations (e.g., en→en, zh→zh)
+        target_lang_group = locale_to_lang_group(target_locale)
+        same_lang_translations = translations.filter(
+            item__lang_group=target_lang_group
+        ).count()
+
+        if same_lang_translations == 0:
+            print_result(True, f"No same-language translations (skipped {target_lang_group}→{target_locale})")
+        else:
+            print_result(False, f"Found {same_lang_translations} same-language translations (should skip {target_lang_group}→{target_locale})")
             all_passed = False
 
     return section_result(all_passed, "Translation derivation checks")
@@ -417,12 +443,34 @@ def validate_selection_correctness() -> bool:
     source_langs = SystemSettings.get_setting('translation_source_langs', default=['en', 'ja'])
     target_locales = SystemSettings.get_setting('translation_target_locales', default=['zh-Hans'])
 
-    print_info(f"Settings: hot_percent={hot_percent}%, small_bucket=({small_min}-{small_max})")
+    print_info(f"Settings: hot_percent={hot_percent}%, small_bucket=({small_min}-{small_max}), source_langs={source_langs if source_langs else 'ALL'}")
 
     for target_locale in target_locales:
-        print_info(f"Target locale: {target_locale}")
+        print_info(f"\nTarget locale: {target_locale}")
 
-        for base_lang in source_langs:
+        # Get target language group for same-language skip
+        target_lang_group = locale_to_lang_group(target_locale)
+
+        # Get all language groups if source_langs is empty
+        if source_langs and len(source_langs) > 0:
+            base_langs = source_langs
+        else:
+            # Get all distinct base_langs from items with hotness
+            base_langs = TrendItem.objects.filter(
+                hotness__isnull=False
+            ).values_list('base_lang', flat=True).distinct()
+            print_info(f"  Validating all language groups: {list(base_langs)}")
+
+        for base_lang in base_langs:
+            # Skip validation if this base_lang would be same as target
+            # Example: Don't validate en→en translations (should be 0)
+            base_lang_group = TrendItem.objects.filter(
+                base_lang=base_lang
+            ).values_list('lang_group', flat=True).first()
+
+            if base_lang_group == target_lang_group:
+                print_skip(f"  {base_lang}: Skipping same-language validation ({base_lang_group}→{target_locale})")
+                continue
             # Count items with hotness for this language
             items_with_hotness = TrendItem.objects.filter(
                 base_lang=base_lang,

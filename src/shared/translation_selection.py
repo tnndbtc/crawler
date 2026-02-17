@@ -37,6 +37,7 @@ Usage:
 import logging
 from typing import List, Dict, Any
 from django.db.models import Q
+from shared.language_detection import locale_to_lang_group
 
 logger = logging.getLogger(__name__)
 
@@ -161,18 +162,35 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     small_max = settings['small_bucket_max']
     source_langs = settings['source_langs']
 
+    # Get target language group for same-language skip logic
+    target_lang_group = locale_to_lang_group(target_locale)
+
     logger.info(
         f"Selecting items for translation to {target_locale}: "
-        f"hot_percent={hot_percent}%, source_langs={source_langs}"
+        f"hot_percent={hot_percent}%, source_langs={source_langs if source_langs else 'ALL'}, "
+        f"excluding target_lang_group={target_lang_group}"
     )
 
     # Build base query:
-    # - base_lang in source_langs (e.g., ['en', 'ja'])
+    # - base_lang in source_langs (if specified), or ALL languages if empty
     # - hotness is not NULL (can't rank without hotness)
+    # - Skip same-language translations (e.g., en→en, zh→zh)
     # - No existing derivation for target_locale
-    base_query = TrendItem.objects.filter(
-        base_lang__in=source_langs,
-        hotness__isnull=False,
+    if source_langs and len(source_langs) > 0:
+        # Filter to specific source languages
+        base_query = TrendItem.objects.filter(
+            base_lang__in=source_langs,
+            hotness__isnull=False,
+        )
+    else:
+        # Select from ALL languages
+        base_query = TrendItem.objects.filter(
+            hotness__isnull=False,
+        )
+
+    # Skip same-language translations (e.g., don't translate English→English)
+    base_query = base_query.exclude(
+        lang_group=target_lang_group
     ).exclude(
         derivations__derivation_type='translation',
         derivations__target_locale=target_locale,
@@ -267,7 +285,15 @@ def get_translation_coverage_stats(target_locale: str) -> Dict[str, Any]:
 
     stats = {}
 
-    for base_lang in source_langs:
+    # If source_langs is empty list, get all distinct languages
+    if source_langs and len(source_langs) > 0:
+        base_langs = source_langs
+    else:
+        base_langs = TrendItem.objects.filter(
+            hotness__isnull=False
+        ).values_list('base_lang', flat=True).distinct()
+
+    for base_lang in base_langs:
         # Total items for this language
         total = TrendItem.objects.filter(base_lang=base_lang).count()
 

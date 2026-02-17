@@ -197,7 +197,7 @@ def validate_translation_coverage():
 
     print(f"Settings:")
     print(f"  translation_hot_percent: {hot_percent}%")
-    print(f"  translation_source_langs: {source_langs}")
+    print(f"  translation_source_langs: {source_langs if source_langs else 'ALL'}")
     print(f"  translation_target_locales: {target_locales}")
 
     all_passed = True
@@ -224,7 +224,17 @@ def validate_translation_coverage():
         if inline_count > 0:
             print(f"    Source B (inline display_*): {inline_count}")
 
-        for base_lang in source_langs:
+        # If source_langs is empty, validate all language groups
+        if source_langs and len(source_langs) > 0:
+            base_langs = source_langs
+        else:
+            # Get all distinct base_langs from items with hotness
+            base_langs = TrendItem.objects.filter(
+                hotness__isnull=False
+            ).values_list('base_lang', flat=True).distinct()
+            print(f"  Validating all language groups: {list(base_langs)}")
+
+        for base_lang in base_langs:
             # Count items
             total = TrendItem.objects.filter(base_lang=base_lang).count()
             with_hotness = TrendItem.objects.filter(
@@ -341,9 +351,13 @@ def validate_settings_configuration():
     for setting_key in required_settings:
         value = SystemSettings.get_setting(setting_key)
 
-        if value is None:
+        # Special case: translation_source_langs can be None or empty list (meaning ALL languages)
+        if value is None and setting_key != 'translation_source_langs':
             print(f"  ❌ {setting_key}: NOT SET")
             all_present = False
+        elif setting_key == 'translation_source_langs' and (value is None or value == []):
+            display_value = "[] (ALL languages)" if value == [] else "null (ALL languages)"
+            print(f"  ✅ {setting_key}: {display_value}")
         else:
             print(f"  ✅ {setting_key}: {value}")
 
