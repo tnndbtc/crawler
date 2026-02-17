@@ -441,7 +441,7 @@ def validate_api_endpoints() -> Tuple[bool, bool]:
     """
     print_section_header(6, "API Validation (Optional)")
 
-    api_url = "http://localhost:8000/api/v1/trends"
+    api_url = "http://localhost:8002/api/v1/trends"
 
     try:
         # Test zh-Hans endpoint
@@ -498,7 +498,7 @@ def validate_api_endpoints() -> Tuple[bool, bool]:
         return section_result(True, "API validation"), False
 
     except requests.exceptions.ConnectionError:
-        print_skip("API not reachable at localhost:8000")
+        print_skip("API not reachable at localhost:8002")
         print_info("  SKIP: API validation (not a failure)")
         return True, True
     except requests.exceptions.Timeout:
