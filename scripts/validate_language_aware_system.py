@@ -229,10 +229,11 @@ def validate_translation_coverage():
             base_langs = source_langs
         else:
             # Get all distinct base_langs from items with hotness
-            base_langs = TrendItem.objects.filter(
+            # Use set() to force evaluation and get truly distinct values
+            base_langs = list(set(TrendItem.objects.filter(
                 hotness__isnull=False
-            ).values_list('base_lang', flat=True).distinct()
-            print(f"  Validating all language groups: {list(base_langs)}")
+            ).values_list('base_lang', flat=True)))
+            print(f"  Validating all language groups: {base_langs}")
 
         for base_lang in base_langs:
             # Count items

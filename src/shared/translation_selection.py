@@ -188,6 +188,10 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
             hotness__isnull=False,
         )
 
+    # Pre-fetch related objects for async context compatibility
+    # This prevents "SynchronousOnlyOperation" errors when accessing item.surface/region
+    base_query = base_query.select_related('surface', 'region')
+
     # Skip same-language translations (e.g., don't translate English→English)
     base_query = base_query.exclude(
         lang_group=target_lang_group
@@ -198,7 +202,9 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     )
 
     # Get all language groups from source items
-    lang_groups = base_query.values_list('lang_group', flat=True).distinct()
+    # CRITICAL FIX: Force evaluation to list to avoid distinct() bug
+    # Without this, the QuerySet iterates over ALL items instead of distinct values
+    lang_groups = list(set(base_query.values_list('lang_group', flat=True)))
 
     selected_items = []
 

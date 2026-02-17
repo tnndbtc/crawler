@@ -456,10 +456,12 @@ def validate_selection_correctness() -> bool:
             base_langs = source_langs
         else:
             # Get all distinct base_langs from items with hotness
-            base_langs = TrendItem.objects.filter(
+            # Use set() to force evaluation and get truly distinct values
+            # (Django's .distinct() has a bug where it doesn't work correctly in iteration)
+            base_langs = list(set(TrendItem.objects.filter(
                 hotness__isnull=False
-            ).values_list('base_lang', flat=True).distinct()
-            print_info(f"  Validating all language groups: {list(base_langs)}")
+            ).values_list('base_lang', flat=True)))
+            print_info(f"  Validating all language groups: {base_langs}")
 
         for base_lang in base_langs:
             # Skip validation if this base_lang would be same as target

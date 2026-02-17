@@ -300,6 +300,21 @@ async def process_display_translations_selective(
     processed_count = 0
     for item in items:
         try:
+            # Extract all item data in sync context to avoid async database access
+            def get_item_data():
+                return {
+                    'item_id': item.id,
+                    'base_lang': item.base_lang,
+                    'hotness': item.hotness,
+                    'title': item.title_original,
+                    'description': item.description_original,
+                    'source_locale': item.original_locale,
+                    'source_platform': item.surface.platform if item.surface else '',
+                    'region': item.region.key if item.region else '',
+                }
+
+            item_data = await sync_to_async(get_item_data)()
+
             # Skip if derivation already exists (race condition protection)
             derivation_exists = await sync_to_async(
                 ItemDerivation.objects.filter(
@@ -311,18 +326,25 @@ async def process_display_translations_selective(
 
             if derivation_exists:
                 logger.debug(
-                    f"⏭️  Skipping item #{item.id}: derivation already exists"
+                    f"⏭️  Skipping item #{item_data['item_id']}: derivation already exists"
                 )
                 continue
 
             logger.debug(
-                f"📝 Selective translation: item #{item.id} | "
-                f"{item.base_lang} → {target_locale} | "
-                f"hotness={item.hotness:.2f}"
+                f"📝 Selective translation: item #{item_data['item_id']} | "
+                f"{item_data['base_lang']} → {target_locale} | "
+                f"hotness={item_data['hotness']:.2f}"
             )
 
-            # Translate
-            result = await manager.translate_item_display(item, target_locale)
+            # Translate using direct method (all data now in simple dict)
+            result = await manager.translate_display(
+                title=item_data['title'],
+                description=item_data['description'],
+                source_locale=item_data['source_locale'],
+                target_locale=target_locale,
+                source_platform=item_data['source_platform'],
+                region=item_data['region']
+            )
 
             if result.success:
                 # Store in ItemDerivation
@@ -337,8 +359,8 @@ async def process_display_translations_selective(
                 )
 
                 logger.info(
-                    f"✅ Selective translation complete: item #{item.id} → {target_locale} | "
-                    f"engine: {result.engine}, hotness: {item.hotness:.2f}"
+                    f"✅ Selective translation complete: item #{item_data['item_id']} → {target_locale} | "
+                    f"engine: {result.engine}, hotness: {item_data['hotness']:.2f}"
                 )
 
                 # DUAL-WRITE: Also update inline fields for backward compatibility
@@ -367,7 +389,7 @@ async def process_display_translations_selective(
             elif result.engine in ('system_stopped', 'none_available'):
                 # Provider unavailable - skip this item
                 logger.info(
-                    f"⏸️ Selective translation skipped (providers unavailable): item #{item.id}"
+                    f"⏸️ Selective translation skipped (providers unavailable): item #{item_data['item_id']}"
                 )
                 continue
 
@@ -385,15 +407,21 @@ async def process_display_translations_selective(
                 )
 
                 logger.warning(
-                    f"❌ Selective translation failed: item #{item.id} | "
+                    f"❌ Selective translation failed: item #{item_data['item_id']} | "
                     f"error: {result.error}"
                 )
 
             processed_count += 1
 
         except Exception as e:
+            # Get item ID safely (item_data might not exist if error was early)
+            try:
+                item_id = item_data['item_id']
+            except (NameError, KeyError):
+                item_id = await sync_to_async(lambda: item.id)()
+
             logger.error(
-                f"Error processing selective translation for item #{item.id}: {e}",
+                f"Error processing selective translation for item #{item_id}: {e}",
                 exc_info=True
             )
             # Try to create failed derivation

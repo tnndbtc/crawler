@@ -407,13 +407,13 @@ for target_locale in target_locales:
 
     # Check: translations only from allowed source langs (if source_langs is specified)
     if source_langs and len(source_langs) > 0:
-        wrong_langs = TrendItem.objects.filter(
+        wrong_langs = list(set(TrendItem.objects.filter(
             derivations__derivation_type='translation',
             derivations__target_locale=target_locale,
             derivations__status='complete'
-        ).exclude(base_lang__in=source_langs).values_list('base_lang', flat=True).distinct()
+        ).exclude(base_lang__in=source_langs).values_list('base_lang', flat=True)))
 
-        if not list(wrong_langs):
+        if not list(set(wrong_langs)):
             print(f'  ✅ All translations from allowed source langs: {source_langs}')
         else:
             print(f'  ❌ Translations from disallowed langs: {list(wrong_langs)}')
@@ -451,9 +451,9 @@ for target_locale in target_locales:
 
     # Check: if items exist with hotness but no translations -> fail
     # Get target language group for same-language skip
-    check_langs = source_langs if (source_langs and len(source_langs) > 0) else list(TrendItem.objects.filter(
+    check_langs = source_langs if (source_langs and len(source_langs) > 0) else list(set(TrendItem.objects.filter(
         hotness__isnull=False
-    ).values_list('base_lang', flat=True).distinct())
+    ).values_list('base_lang', flat=True)))
 
     for lang in check_langs:
         # Skip same-language checks
@@ -523,9 +523,9 @@ for target_locale in target_locales:
         base_langs = source_langs
     else:
         # Get all distinct base_langs from items with hotness
-        base_langs = list(TrendItem.objects.filter(
+        base_langs = list(set(TrendItem.objects.filter(
             hotness__isnull=False
-        ).values_list('base_lang', flat=True).distinct())
+        ).values_list('base_lang', flat=True)))
         print(f'  Validating all language groups: {base_langs}')
 
     for base_lang in base_langs:
