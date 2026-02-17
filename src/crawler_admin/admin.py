@@ -20,7 +20,9 @@ from .models import (
     TrendSurface,
     TrendItem,
     TrendItemTranslation,
-    CrawlRun
+    CrawlRun,
+    ItemDerivation,
+    SystemSettings
 )
 
 
@@ -232,6 +234,8 @@ class TrendItemAdmin(admin.ModelAdmin):
         'region',
         'platform_display',
         'bucket',
+        'lang_group',
+        'hotness_display',
         'canonical_status',
         'rank_position',
         'collected_at'
@@ -239,6 +243,8 @@ class TrendItemAdmin(admin.ModelAdmin):
     list_filter = [
         'region',
         'bucket',
+        'base_lang',
+        'lang_group',
         MissingCanonicalTranslationFilter,
         'collected_at',
     ]
@@ -253,9 +259,17 @@ class TrendItemAdmin(admin.ModelAdmin):
         ('Classification', {
             'fields': ('region', 'surface', 'bucket', 'external_id')
         }),
+        ('Language (Language-Aware System)', {
+            'fields': ('base_lang', 'locale', 'lang_group', 'lang_detected_at'),
+            'description': 'Language classification for selective translation'
+        }),
         ('Engagement & Ranking', {
             'fields': ('rank_position', 'engagement_signals', 'published_at'),
             'description': 'rank_position is MORE important than timestamps (product constraint)'
+        }),
+        ('Hotness Score (Selective Translation)', {
+            'fields': ('hotness', 'hotness_computed_at'),
+            'description': 'Computed hotness score for translation selection (recency × engagement)'
         }),
         ('Canonical Translation (en-US)', {
             'fields': (
@@ -269,7 +283,7 @@ class TrendItemAdmin(admin.ModelAdmin):
                 'display_title_zh_hans', 'display_description_zh_hans',
                 'display_status_zh_hans', 'display_engine_zh_hans'
             ),
-            'description': 'Chinese Simplified translation for UI display',
+            'description': 'Chinese Simplified translation for UI display (legacy inline fields)',
             'classes': ('collapse',)
         }),
         ('Metadata', {
@@ -281,7 +295,9 @@ class TrendItemAdmin(admin.ModelAdmin):
     readonly_fields = [
         'canonical_hash', 'collected_at',
         'canonical_status', 'canonical_engine', 'canonical_error',
-        'display_status_zh_hans', 'display_engine_zh_hans'
+        'display_status_zh_hans', 'display_engine_zh_hans',
+        'base_lang', 'locale', 'lang_group', 'lang_detected_at',
+        'hotness', 'hotness_computed_at'
     ]
 
     def title_snippet(self, obj):
@@ -318,6 +334,37 @@ class TrendItemAdmin(admin.ModelAdmin):
         else:
             return format_html('❓ <span style="color: gray;">Unknown</span>')
     canonical_status.short_description = 'Canonical EN'
+
+    def hotness_display(self, obj):
+        """Display hotness score with color coding."""
+        if obj.hotness is None:
+            return format_html('<span style="color: gray;">-</span>')
+
+        hotness = obj.hotness
+        if hotness >= 500:
+            color = 'darkred'
+            icon = '🔥🔥🔥'
+        elif hotness >= 300:
+            color = 'red'
+            icon = '🔥🔥'
+        elif hotness >= 200:
+            color = 'orange'
+            icon = '🔥'
+        elif hotness >= 100:
+            color = 'darkgoldenrod'
+            icon = '⚡'
+        elif hotness >= 50:
+            color = 'gray'
+            icon = '•'
+        else:
+            color = 'lightgray'
+            icon = '○'
+
+        return format_html(
+            '{} <span style="color: {};">{:.1f}</span>',
+            icon, color, hotness
+        )
+    hotness_display.short_description = 'Hotness'
 
 
 @admin.register(TrendItemTranslation)
@@ -443,6 +490,124 @@ class CrawlRunAdmin(admin.ModelAdmin):
         else:
             return f'{ms/60000:.1f}m'
     duration_display.short_description = 'Duration'
+
+
+@admin.register(ItemDerivation)
+class ItemDerivationAdmin(admin.ModelAdmin):
+    """
+    Admin for item derivations (translations, summaries, etc.)
+
+    Shows all derived content for trend items in the language-aware system.
+    Derivations are stored separately from original content to maintain immutability.
+    """
+    list_display = [
+        'derivation_id',
+        'item_title_snippet',
+        'derivation_type',
+        'target_locale',
+        'status',
+        'engine',
+        'created_at'
+    ]
+    list_filter = [
+        'derivation_type',
+        'target_locale',
+        'status',
+        'engine',
+        'created_at',
+    ]
+    search_fields = [
+        'item__title_original',
+        'content_title',
+        'error_message'
+    ]
+    ordering = ['-created_at']
+    date_hierarchy = 'created_at'
+
+    fieldsets = (
+        ('Derivation Info', {
+            'fields': ('item', 'derivation_type', 'target_locale')
+        }),
+        ('Content', {
+            'fields': ('content_title', 'content_body'),
+            'description': 'Derived/translated content'
+        }),
+        ('Processing', {
+            'fields': ('engine', 'status', 'error_message'),
+            'description': 'Processing status and metadata'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    readonly_fields = ['created_at', 'updated_at']
+
+    def item_title_snippet(self, obj):
+        """Display truncated original title."""
+        title = obj.item.title_original
+        if len(title) > 50:
+            return title[:50] + '...'
+        return title
+    item_title_snippet.short_description = 'Original Title'
+
+    def has_add_permission(self, request):
+        """Derivations are created by workers, not manually."""
+        return False
+
+
+@admin.register(SystemSettings)
+class SystemSettingsAdmin(admin.ModelAdmin):
+    """
+    Admin for system-wide settings.
+
+    Allows admins to configure translation behavior without code deployments.
+    Settings are read by workers at runtime.
+    """
+    list_display = [
+        'key',
+        'value_display',
+        'value_type',
+        'updated_at',
+        'updated_by'
+    ]
+    list_filter = [
+        'value_type',
+        'updated_at',
+    ]
+    search_fields = ['key', 'description']
+    ordering = ['key']
+
+    fieldsets = (
+        ('Setting', {
+            'fields': ('key', 'value_json', 'value_type'),
+            'description': 'Setting key and value'
+        }),
+        ('Documentation', {
+            'fields': ('description',),
+            'description': 'Human-readable description'
+        }),
+        ('Audit', {
+            'fields': ('updated_at', 'updated_by'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    readonly_fields = ['updated_at']
+
+    def value_display(self, obj):
+        """Display value with truncation for long values."""
+        value_str = str(obj.value_json)
+        if len(value_str) > 80:
+            return value_str[:80] + '...'
+        return value_str
+    value_display.short_description = 'Value'
+
+    def save_model(self, request, obj, form, change):
+        """Track who updated the setting."""
+        obj.updated_by = request.user.username
+        super().save_model(request, obj, form, change)
 
 
 # Customize admin site

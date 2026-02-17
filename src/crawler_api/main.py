@@ -38,7 +38,8 @@ from crawler_admin.models import (
     TrendSurface,
     TrendItem,
     TrendItemTranslation,
-    CrawlRun
+    CrawlRun,
+    ItemDerivation
 )
 
 # Setup logging
@@ -348,6 +349,7 @@ async def _fetch_zh_hans_items(
 async def list_trends(
     region: Optional[str] = Query(None, description="Filter by region key"),
     bucket: Optional[str] = Query(None, description="Filter by bucket"),
+    lang_group: Optional[str] = Query(None, description="Filter by language group (e.g., 'en', 'zh', 'ja')"),
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: int = Query(50, ge=1, le=200, description="Number of items to return (hint)"),
     lang: str = Query("en-US", description="Language for display content (en-US|zh-Hans)")
@@ -382,15 +384,21 @@ async def list_trends(
     - Returns next_cursor for fetching more items
     """
     # Build base queryset
+    # LANGUAGE-AWARE: Sort by hotness first, then collected_at
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
-        'translations'
-    ).order_by('-collected_at', '-id')  # Secondary sort by ID for stability
+        'translations',
+        'derivations'  # Join derivations table for selective translation
+    ).order_by('-hotness', '-collected_at', '-id')  # Hotness first, then recency, then ID for stability
 
     if region:
         queryset = queryset.filter(region__key=region)
 
     if bucket:
         queryset = queryset.filter(bucket=bucket)
+
+    # LANGUAGE-AWARE: Filter by language group (e.g., 'en', 'zh', 'ja')
+    if lang_group:
+        queryset = queryset.filter(lang_group=lang_group)
 
     # Apply cursor filter
     cursor_id = None
@@ -460,18 +468,30 @@ async def list_trends(
                 canonical_description = item.description_original
 
         # Feature A: Populate display fields based on lang parameter
-        # First check new TrendItem display fields, then fall back to legacy
+        # LANGUAGE-AWARE: Check derivations table first, then inline fields, then legacy
         display_title = None
         display_description = None
 
-        if lang == 'zh-Hans':
-            # Check new zh-Hans fields
+        # 1. Check ItemDerivation table (NEW selective translation approach)
+        derivation = None
+        for deriv in item.derivations.all():
+            if (deriv.derivation_type == 'translation' and
+                deriv.target_locale == lang and
+                deriv.status == 'complete'):
+                derivation = deriv
+                break
+
+        if derivation:
+            display_title = derivation.content_title
+            display_description = derivation.content_body
+        elif lang == 'zh-Hans':
+            # 2. Check new zh-Hans inline fields (backward compatibility)
             if item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
                 display_title = item.display_title_zh_hans
                 display_description = item.display_description_zh_hans
 
         if not display_title:
-            # Fallback to legacy translations table
+            # 3. Fallback to legacy translations table
             requested_lang_translation = None
             for trans in item.translations.all():
                 if trans.locale == lang and trans.status == 'complete':
@@ -482,11 +502,11 @@ async def list_trends(
                 display_title = requested_lang_translation.title
                 display_description = requested_lang_translation.description
             elif item.original_locale == lang or item.original_locale.startswith(lang[:2]):
-                # Original content is in requested language
+                # 4. Original content is in requested language
                 display_title = item.title_original
                 display_description = item.description_original
             else:
-                # Fallback to canonical (en-US)
+                # 5. Final fallback to canonical (en-US)
                 display_title = canonical_title
                 display_description = canonical_description
 

@@ -37,6 +37,8 @@ django.setup()
 
 from crawler_admin.models import TrendSurface, TrendItem, CrawlRun
 from crawler_api.surfaces.registry import get_collector
+from shared.language_detection import classify_item_language
+from shared.hotness import compute_hotness
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +132,15 @@ async def execute_surface(surface: TrendSurface) -> None:
 
             # Store (unless DRY_RUN from /tmp/t8)
             if not DRY_RUN:
-                await sync_to_async(TrendItem.objects.create)(
+                # Language detection and classification
+                base_lang, locale, lang_group = classify_item_language(
+                    title=item_dict['title'],
+                    description=item_dict.get('description'),
+                    region_default_locale=surface.region.default_locale
+                )
+
+                # Create item
+                item = await sync_to_async(TrendItem.objects.create)(
                     region=surface.region,
                     surface=surface,
                     external_id=item_dict.get('external_id'),
@@ -152,7 +162,31 @@ async def execute_surface(surface: TrendSurface) -> None:
 
                     # CRITICAL: raw_payload (from /tmp/t9)
                     raw_payload=item_dict.get('raw_payload', {}),
+
+                    # Language-aware fields
+                    base_lang=base_lang,
+                    locale=locale,
+                    lang_group=lang_group,
+                    lang_detected_at=timezone.now(),
                 )
+
+                # Compute initial hotness score
+                try:
+                    hotness_score = compute_hotness(item)
+                    item.hotness = hotness_score
+                    item.hotness_computed_at = timezone.now()
+                    await sync_to_async(item.save)(
+                        update_fields=['hotness', 'hotness_computed_at']
+                    )
+                    logger.debug(
+                        f"Computed hotness={hotness_score:.2f} for item #{item.id} "
+                        f"({lang_group})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to compute hotness for item #{item.id}: {e}"
+                    )
+                    # Don't fail ingestion if hotness computation fails
 
             stored_new_count += 1
 

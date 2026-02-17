@@ -37,10 +37,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
-from crawler_admin.models import TrendItem
+from crawler_admin.models import TrendItem, ItemDerivation
 from translation.manager import TranslationManager
 from translation.models import TranslationConfig
 from translation.health import ProviderHealthManager
+from shared.translation_selection import select_items_for_translation
 
 # Legacy imports for backward compatibility
 from crawler_admin.models import TrendItemTranslation
@@ -251,6 +252,166 @@ async def process_display_translations(
             setattr(item, status_field, 'failed')
             setattr(item, error_field, str(e))
             await sync_to_async(item.save)(update_fields=[status_field, error_field])
+
+    return processed_count
+
+
+async def process_display_translations_selective(
+    manager: TranslationManager,
+    target_locale: str,
+    batch_size: int = 10
+) -> int:
+    """
+    Process display translations using selective hotness-based selection.
+
+    This is the NEW approach that:
+    1. Uses select_items_for_translation() to get top X% hottest items
+    2. Stores translations in ItemDerivation table (not inline fields)
+    3. Checks for existing derivations (idempotency)
+    4. Supports admin-configurable translation percentage
+
+    Args:
+        manager: TranslationManager instance
+        target_locale: Target locale (e.g., 'zh-Hans')
+        batch_size: Number of items to process per batch
+
+    Returns:
+        Number of items processed
+    """
+    config = await manager.get_config()
+
+    if not config.enable_translation:
+        return 0
+
+    # Get selected items using hotness algorithm
+    items = await sync_to_async(select_items_for_translation)(
+        target_locale, batch_size
+    )
+
+    if not items:
+        logger.debug(f"No items selected for translation to {target_locale}")
+        return 0
+
+    logger.info(
+        f"Processing {len(items)} selected item(s) for translation to {target_locale} "
+        f"(selective mode)"
+    )
+
+    processed_count = 0
+    for item in items:
+        try:
+            # Skip if derivation already exists (race condition protection)
+            derivation_exists = await sync_to_async(
+                ItemDerivation.objects.filter(
+                    item=item,
+                    derivation_type='translation',
+                    target_locale=target_locale
+                ).exists
+            )()
+
+            if derivation_exists:
+                logger.debug(
+                    f"⏭️  Skipping item #{item.id}: derivation already exists"
+                )
+                continue
+
+            logger.debug(
+                f"📝 Selective translation: item #{item.id} | "
+                f"{item.base_lang} → {target_locale} | "
+                f"hotness={item.hotness:.2f}"
+            )
+
+            # Translate
+            result = await manager.translate_item_display(item, target_locale)
+
+            if result.success:
+                # Store in ItemDerivation
+                await sync_to_async(ItemDerivation.objects.create)(
+                    item=item,
+                    derivation_type='translation',
+                    target_locale=target_locale,
+                    content_title=result.title,
+                    content_body=result.description,
+                    engine=result.engine,
+                    status='complete'
+                )
+
+                logger.info(
+                    f"✅ Selective translation complete: item #{item.id} → {target_locale} | "
+                    f"engine: {result.engine}, hotness: {item.hotness:.2f}"
+                )
+
+                # DUAL-WRITE: Also update inline fields for backward compatibility
+                # This can be removed in Phase C (cleanup) after validation
+                locale_suffix = target_locale.replace('-', '_').lower()
+                title_field = f'display_title_{locale_suffix}'
+                description_field = f'display_description_{locale_suffix}'
+                status_field = f'display_status_{locale_suffix}'
+                engine_field = f'display_engine_{locale_suffix}'
+                error_field = f'display_error_{locale_suffix}'
+
+                if hasattr(TrendItem, title_field):
+                    setattr(item, title_field, result.title)
+                    setattr(item, description_field, result.description)
+                    setattr(item, status_field, 'complete')
+                    setattr(item, engine_field, result.engine)
+                    setattr(item, error_field, None)
+                    await sync_to_async(item.save)(
+                        update_fields=[
+                            title_field, description_field,
+                            status_field, engine_field, error_field
+                        ]
+                    )
+                    logger.debug(f"  (also updated inline fields for compatibility)")
+
+            elif result.engine in ('system_stopped', 'none_available'):
+                # Provider unavailable - skip this item
+                logger.info(
+                    f"⏸️ Selective translation skipped (providers unavailable): item #{item.id}"
+                )
+                continue
+
+            else:
+                # Translation failed
+                await sync_to_async(ItemDerivation.objects.create)(
+                    item=item,
+                    derivation_type='translation',
+                    target_locale=target_locale,
+                    content_title='',
+                    content_body='',
+                    engine=result.engine or 'unknown',
+                    status='failed',
+                    error_message=result.error
+                )
+
+                logger.warning(
+                    f"❌ Selective translation failed: item #{item.id} | "
+                    f"error: {result.error}"
+                )
+
+            processed_count += 1
+
+        except Exception as e:
+            logger.error(
+                f"Error processing selective translation for item #{item.id}: {e}",
+                exc_info=True
+            )
+            # Try to create failed derivation
+            try:
+                await sync_to_async(ItemDerivation.objects.get_or_create)(
+                    item=item,
+                    derivation_type='translation',
+                    target_locale=target_locale,
+                    defaults={
+                        'content_title': '',
+                        'content_body': '',
+                        'engine': 'error',
+                        'status': 'failed',
+                        'error_message': str(e)
+                    }
+                )
+            except:
+                pass  # Best effort
 
     return processed_count
 
@@ -507,14 +668,21 @@ async def run_worker_loop():
             processed_canonical = await process_canonical_translations(manager, batch_size)
 
             # 3. Process display translations for each enabled locale
+            # Use SELECTIVE translation mode (new approach)
             processed_display = {}
             for locale in config.enabled_locales:
-                # Mark native items as skipped
+                # Mark native items as skipped (for inline fields compatibility)
                 skipped_native = await mark_native_items_as_skipped(locale, batch_size)
 
-                # Process translations
-                count = await process_display_translations(manager, locale, batch_size)
+                # Process translations using SELECTIVE approach (hotness-based)
+                count = await process_display_translations_selective(manager, locale, batch_size)
                 processed_display[locale] = count
+
+                # LEGACY: Also process old inline-field approach for items not selected
+                # This ensures backward compatibility during transition
+                # Can be removed in Phase C (cleanup) after full migration
+                # count_legacy = await process_display_translations(manager, locale, batch_size)
+                # processed_display[f'{locale}_legacy'] = count_legacy
 
             # Log summary
             total_processed = processed_canonical + sum(processed_display.values())
