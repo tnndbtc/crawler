@@ -205,6 +205,25 @@ def validate_translation_coverage():
     for target_locale in target_locales:
         print(f"\nTarget locale: {target_locale}")
 
+        # Per-source translation breakdown
+        derivation_count = ItemDerivation.objects.filter(
+            derivation_type='translation',
+            target_locale=target_locale,
+            status='complete'
+        ).count()
+
+        # Try to count inline translations (may not exist in all versions)
+        inline_field = f"display_title_{target_locale.lower().replace('-', '_')}"
+        try:
+            inline_count = TrendItem.objects.exclude(**{inline_field: ''}).exclude(**{inline_field: None}).count()
+        except Exception:
+            inline_count = 0
+
+        print(f"  Translation sources:")
+        print(f"    Source A (ItemDerivation): {derivation_count}")
+        if inline_count > 0:
+            print(f"    Source B (inline display_*): {inline_count}")
+
         for base_lang in source_langs:
             # Count items
             total = TrendItem.objects.filter(base_lang=base_lang).count()
@@ -213,7 +232,7 @@ def validate_translation_coverage():
                 hotness__isnull=False
             ).count()
 
-            # Count translated items (from ItemDerivation)
+            # Count translated items (Source A: ItemDerivation only)
             translated = TrendItem.objects.filter(
                 base_lang=base_lang,
                 derivations__derivation_type='translation',
@@ -229,7 +248,7 @@ def validate_translation_coverage():
             print(f"  {base_lang}:")
             print(f"    Total items: {total}")
             print(f"    Items with hotness: {with_hotness}")
-            print(f"    Translated: {translated}")
+            print(f"    Translated (ItemDerivation): {translated}")
             print(f"    Coverage: {coverage_pct:.1f}%")
 
             # Check if coverage is reasonable

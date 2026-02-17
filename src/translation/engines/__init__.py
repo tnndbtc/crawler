@@ -56,3 +56,11 @@ def get_available_engines() -> Dict[str, Type['BaseTranslationEngine']]:
 from .deepl_engine import DeepLEngine  # noqa: F401, E402
 from .openai_engine import OpenAIEngine  # noqa: F401, E402
 # LocalEngine (argostranslate) removed due to poor quality
+
+# Conditionally import test engine if TRANSLATION_TEST_MODE=true
+import os
+if os.getenv('TRANSLATION_TEST_MODE', 'false').lower() == 'true':
+    from .test_engine import DeterministicTestEngine  # noqa: F401, E402
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Test translator enabled (TRANSLATION_TEST_MODE=true) - using deterministic fallback")

@@ -161,6 +161,12 @@ class TranslationConfig(models.Model):
             if engine not in engines:
                 engines.append(engine)
 
+        # Append test-fallback engine if registered (TRANSLATION_TEST_MODE=true)
+        import os
+        if os.getenv('TRANSLATION_TEST_MODE', 'false').lower() == 'true':
+            if 'test-fallback' not in engines:
+                engines.append('test-fallback')
+
         return engines
 
     def get_llm_model(self, translation_type: str) -> 'LLMModelConfig':

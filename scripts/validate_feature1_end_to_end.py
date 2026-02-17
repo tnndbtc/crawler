@@ -265,6 +265,7 @@ def validate_translation_derivations() -> bool:
     Validate ItemDerivation integrity for translations.
 
     Checks:
+    - Per-source translation reporting (ItemDerivation vs inline vs legacy)
     - No duplicate derivations by (item_id, derivation_type, target_locale)
     - No translations for lang_group='zh' items (should skip)
     - Translations only for allowed source languages
@@ -281,21 +282,63 @@ def validate_translation_derivations() -> bool:
     source_langs = SystemSettings.get_setting('translation_source_langs', default=['en', 'ja'])
 
     for target_locale in target_locales:
-        print_info(f"Target locale: {target_locale}")
+        print_info(f"Translation sources for {target_locale}:")
 
-        # Count translations
+        # Count Source A: ItemDerivation (new pipeline)
+        derivation_count = ItemDerivation.objects.filter(
+            derivation_type='translation',
+            target_locale=target_locale,
+            status='complete'
+        ).count()
+
+        # Count Source B: Inline display_* fields (transitional dual-write)
+        # For zh-Hans, check display_title_zh_hans and display_status_zh_hans='complete'
+        inline_field = f"display_title_{target_locale.lower().replace('-', '_')}"
+        status_field = f"display_status_{target_locale.lower().replace('-', '_')}"
+
+        # Try to count inline translations (may not exist in all versions)
+        try:
+            inline_count = TrendItem.objects.exclude(**{inline_field: ''}).exclude(**{inline_field: None}).count()
+        except Exception:
+            inline_count = 0  # Field doesn't exist
+
+        # Count items with both ItemDerivation AND inline (dual-written)
+        # This helps validate the dual-write mechanism
+        try:
+            dual_write_count = TrendItem.objects.filter(
+                derivations__derivation_type='translation',
+                derivations__target_locale=target_locale,
+                derivations__status='complete'
+            ).exclude(**{inline_field: ''}).exclude(**{inline_field: None}).distinct().count()
+        except Exception:
+            dual_write_count = 0
+
+        # Calculate inline-only (has inline but no derivation)
+        inline_only_count = inline_count - dual_write_count if inline_count > dual_write_count else 0
+
+        # Print per-source breakdown
+        print_info(f"  Source A (ItemDerivation): {derivation_count}")
+        if inline_count > 0:
+            print_info(f"  Source B (inline display_*): {inline_count}")
+            print_info(f"    - Dual-written (A+B): {dual_write_count}")
+            if inline_only_count > 0:
+                print_info(f"    - Inline-only (B, no A): {inline_only_count}")
+
+        # Reference for validation
         translations = ItemDerivation.objects.filter(
             derivation_type='translation',
             target_locale=target_locale,
             status='complete'
         )
-        translation_count = translations.count()
 
-        print_info(f"  Total {target_locale} translations: {translation_count}")
-
-        if translation_count == 0:
-            print_skip(f"No completed translations for {target_locale} (may be expected if system is new)")
+        if derivation_count == 0:
+            print_skip(f"No ItemDerivation translations for {target_locale} (new pipeline not active)")
+            print_info("  ACTION: Ensure translation_worker is running and items have hotness scores")
+            if inline_count > 0:
+                print_info(f"  NOTE: {inline_count} inline translations exist (legacy/transitional)")
             continue
+        else:
+            print_result(True, f"ItemDerivation-based translations exist (new pipeline active)")
 
         # Check for duplicates
         duplicate_check = ItemDerivation.objects.filter(
@@ -399,8 +442,8 @@ def validate_selection_correctness() -> bool:
                 # Normal: top X%
                 expected = max(1, int(total_count * hot_percent / 100.0))
 
-            # Count actual translations
-            actual = TrendItem.objects.filter(
+            # Count actual translations (Source A: ItemDerivation only)
+            actual_derivations = TrendItem.objects.filter(
                 base_lang=base_lang,
                 derivations__derivation_type='translation',
                 derivations__target_locale=target_locale,
@@ -408,10 +451,10 @@ def validate_selection_correctness() -> bool:
             ).distinct().count()
 
             # Check if within tolerance
-            diff = abs(actual - expected)
+            diff = abs(actual_derivations - expected)
             within_tolerance = diff <= tolerance
 
-            print_info(f"  {base_lang}: N={total_count}, expected={expected}, actual={actual}")
+            print_info(f"  {base_lang}: N={total_count}, expected={expected}, actual_derivations={actual_derivations}")
 
             if within_tolerance:
                 print_result(True, f"{base_lang}: Within ±{tolerance} tolerance")
@@ -474,7 +517,7 @@ def validate_api_endpoints() -> Tuple[bool, bool]:
             print_skip("No items returned (database may be empty)")
             return section_result(True, "API validation"), False
 
-        # Check for zh-Hans translations
+        # Check for zh-Hans translations in API response
         has_translation = False
         for item in items:
             if item.get('title_zh_hans') or item.get('display_title'):
@@ -482,9 +525,23 @@ def validate_api_endpoints() -> Tuple[bool, bool]:
                 break
 
         if has_translation:
-            print_result(True, "At least one item has zh-Hans translation")
+            print_result(True, "At least one item has zh-Hans translation in API")
         else:
             print_skip("No items have zh-Hans translations yet")
+
+        # Check that translations are from ItemDerivation (Source A - new pipeline)
+        derivation_sample = ItemDerivation.objects.filter(
+            derivation_type='translation',
+            target_locale='zh-Hans',
+            status='complete'
+        ).first()
+
+        if derivation_sample:
+            print_result(True, "ItemDerivation-based translations exist (new pipeline)")
+            print_info(f"    Example: item #{derivation_sample.item_id}, engine={derivation_sample.engine}")
+        else:
+            print_result(False, "No ItemDerivation translations (new pipeline not working)")
+            print_info("    Translations may be from legacy inline/TrendItemTranslation sources")
 
         # Check for cross-language items (en/ja items in zh-Hans view)
         source_langs = [item.get('base_lang') for item in items if item.get('base_lang')]

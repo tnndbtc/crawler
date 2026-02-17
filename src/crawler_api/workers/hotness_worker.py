@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 # Configuration from environment
 HOTNESS_WORKER_POLL_INTERVAL = int(os.getenv('HOTNESS_WORKER_POLL_INTERVAL', '300'))  # 5 minutes
 BATCH_SIZE = int(os.getenv('HOTNESS_BATCH_SIZE', '100'))
+BACKFILL_MODE = os.getenv('HOTNESS_BACKFILL_MODE', 'normal')  # 'normal' or 'aggressive'
 
 
 async def compute_hotness_for_new_items(batch_size: int = 100) -> int:
@@ -261,9 +262,12 @@ async def get_hotness_stats() -> dict:
         {
             'total_items': 1000,
             'items_with_hotness': 950,
-            'coverage_pct': 95.0,
-            'items_need_backfill': 50,
-            'items_need_recompute': 20
+            'hotness_coverage_pct': 95.0,
+            'items_need_hotness_backfill': 50,
+            'items_need_recompute': 20,
+            'items_with_base_lang': 900,
+            'lang_coverage_pct': 90.0,
+            'items_need_lang_backfill': 100
         }
     """
     cutoff_time = timezone.now() - timedelta(hours=48)
@@ -274,7 +278,7 @@ async def get_hotness_stats() -> dict:
         TrendItem.objects.filter(hotness__isnull=False).count
     )()
 
-    need_backfill = await sync_to_async(
+    need_hotness_backfill = await sync_to_async(
         TrendItem.objects.filter(hotness__isnull=True).count
     )()
 
@@ -285,14 +289,27 @@ async def get_hotness_stats() -> dict:
         ).count
     )()
 
-    coverage_pct = (with_hotness / total * 100.0) if total > 0 else 0.0
+    # Language coverage stats
+    with_base_lang = await sync_to_async(
+        TrendItem.objects.filter(base_lang__isnull=False).count
+    )()
+
+    need_lang_backfill = await sync_to_async(
+        TrendItem.objects.filter(base_lang__isnull=True).count
+    )()
+
+    hotness_coverage_pct = (with_hotness / total * 100.0) if total > 0 else 0.0
+    lang_coverage_pct = (with_base_lang / total * 100.0) if total > 0 else 0.0
 
     return {
         'total_items': total,
         'items_with_hotness': with_hotness,
-        'coverage_pct': round(coverage_pct, 2),
-        'items_need_backfill': need_backfill,
-        'items_need_recompute': need_recompute
+        'hotness_coverage_pct': round(hotness_coverage_pct, 2),
+        'items_need_hotness_backfill': need_hotness_backfill,
+        'items_need_recompute': need_recompute,
+        'items_with_base_lang': with_base_lang,
+        'lang_coverage_pct': round(lang_coverage_pct, 2),
+        'items_need_lang_backfill': need_lang_backfill
     }
 
 
@@ -307,50 +324,125 @@ async def run_worker_loop():
     4. Log stats
     5. Sleep and repeat
 
+    In aggressive mode (HOTNESS_BACKFILL_MODE=aggressive):
+    - Processes larger batches (500 items)
+    - Loops until backlog < 100 items
+    - For rapid initial backfill
+
     Never crashes - all errors are logged and handled gracefully.
     """
     logger.info("Hotness worker started")
     logger.info(f"HOTNESS_WORKER_POLL_INTERVAL: {HOTNESS_WORKER_POLL_INTERVAL}s")
     logger.info(f"BATCH_SIZE: {BATCH_SIZE}")
+    logger.info(f"BACKFILL_MODE: {BACKFILL_MODE}")
 
     while True:
         try:
             cycle_start = timezone.now()
 
+            # Determine batch size based on mode
+            if BACKFILL_MODE == 'aggressive':
+                batch_size = 500
+                max_iterations = 50  # Prevent infinite loops
+            else:
+                batch_size = BATCH_SIZE
+                max_iterations = 1
+
             # 1. Backfill language classification (for migration)
-            classified = await backfill_language_classification(BATCH_SIZE)
+            total_classified = 0
+            for iteration in range(max_iterations):
+                classified = await backfill_language_classification(batch_size)
+                total_classified += classified
+
+                # In aggressive mode, loop until backlog < 100
+                if BACKFILL_MODE == 'aggressive':
+                    stats = await get_hotness_stats()
+                    remaining = stats['items_need_lang_backfill']
+
+                    if classified > 0:
+                        pct_complete = stats['lang_coverage_pct']
+                        logger.info(
+                            f"Language backfill: {total_classified} processed this cycle, "
+                            f"{remaining} remaining ({pct_complete:.1f}% complete)"
+                        )
+
+                    if remaining < 100:
+                        logger.info(f"Language backfill complete: {remaining} items remaining")
+                        break
+
+                    if classified == 0:
+                        # No more items to process
+                        break
+                else:
+                    # Normal mode - single batch
+                    break
 
             # 2. Compute hotness for new items
-            new_computed = await compute_hotness_for_new_items(BATCH_SIZE)
+            total_computed = 0
+            for iteration in range(max_iterations):
+                new_computed = await compute_hotness_for_new_items(batch_size)
+                total_computed += new_computed
 
-            # 3. Recompute hotness for recent items
+                # In aggressive mode, loop until backlog < 100
+                if BACKFILL_MODE == 'aggressive':
+                    stats = await get_hotness_stats()
+                    remaining = stats['items_need_hotness_backfill']
+
+                    if new_computed > 0:
+                        pct_complete = stats['hotness_coverage_pct']
+                        logger.info(
+                            f"Hotness backfill: {total_computed} processed this cycle, "
+                            f"{remaining} remaining ({pct_complete:.1f}% complete)"
+                        )
+
+                    if remaining < 100:
+                        logger.info(f"Hotness backfill complete: {remaining} items remaining")
+                        break
+
+                    if new_computed == 0:
+                        # No more items to process
+                        break
+                else:
+                    # Normal mode - single batch
+                    break
+
+            # 3. Recompute hotness for recent items (always single batch)
             recomputed = await recompute_hotness_for_recent_items(BATCH_SIZE)
 
-            # 4. Get stats
+            # 4. Get final stats
             stats = await get_hotness_stats()
 
-            # Log cycle summary
-            total_processed = classified + new_computed + recomputed
+            # Log cycle summary with both language and hotness coverage
+            total_processed = total_classified + total_computed + recomputed
             if total_processed > 0:
                 logger.info(
                     f"Cycle complete: "
-                    f"classified={classified}, "
-                    f"new_computed={new_computed}, "
-                    f"recomputed={recomputed} | "
-                    f"Coverage: {stats['coverage_pct']:.1f}% "
-                    f"({stats['items_with_hotness']}/{stats['total_items']})"
+                    f"classified={total_classified}, "
+                    f"new_computed={total_computed}, "
+                    f"recomputed={recomputed}"
+                )
+                logger.info(
+                    f"Coverage: "
+                    f"lang={stats['lang_coverage_pct']:.1f}% ({stats['items_with_base_lang']}/{stats['total_items']}), "
+                    f"hotness={stats['hotness_coverage_pct']:.1f}% ({stats['items_with_hotness']}/{stats['total_items']})"
                 )
             else:
                 logger.debug(
                     f"Cycle complete (no work): "
-                    f"Coverage: {stats['coverage_pct']:.1f}%"
+                    f"lang={stats['lang_coverage_pct']:.1f}%, "
+                    f"hotness={stats['hotness_coverage_pct']:.1f}%"
                 )
 
             # Log if there's a backlog
-            if stats['items_need_backfill'] > BATCH_SIZE:
+            if stats['items_need_lang_backfill'] > BATCH_SIZE:
                 logger.warning(
-                    f"⚠️  Large backlog: {stats['items_need_backfill']} items "
-                    f"need hotness computation"
+                    f"⚠️  Language backlog: {stats['items_need_lang_backfill']} items "
+                    f"need classification"
+                )
+            if stats['items_need_hotness_backfill'] > BATCH_SIZE:
+                logger.warning(
+                    f"⚠️  Hotness backlog: {stats['items_need_hotness_backfill']} items "
+                    f"need computation"
                 )
 
         except Exception as e:
