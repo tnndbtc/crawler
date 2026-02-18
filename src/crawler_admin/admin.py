@@ -360,9 +360,11 @@ class TrendItemAdmin(admin.ModelAdmin):
             color = 'lightgray'
             icon = '○'
 
+        # Format the number first, then pass as string to avoid SafeString issues
+        hotness_str = f'{hotness:.1f}'
         return format_html(
-            '{} <span style="color: {};">{:.1f}</span>',
-            icon, color, hotness
+            '{} <span style="color: {};">{}</span>',
+            icon, color, hotness_str
         )
     hotness_display.short_description = 'Hotness'
 
