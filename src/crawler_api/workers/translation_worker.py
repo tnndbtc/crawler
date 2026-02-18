@@ -52,9 +52,16 @@ logger = logging.getLogger(__name__)
 TRANSLATION_WORKER_POLL_INTERVAL = int(os.getenv('TRANSLATION_WORKER_POLL_INTERVAL', '30'))
 TRANSLATION_BACKLOG_THRESHOLD = int(os.getenv('TRANSLATION_BACKLOG_THRESHOLD', '0'))
 
+# Auto-exit configuration (default: enabled)
+TRANSLATION_WORKER_EXIT_ON_EMPTY = os.getenv('TRANSLATION_WORKER_EXIT_ON_EMPTY', 'true').lower() == 'true'
+TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT = int(os.getenv('TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT', '3'))
+
 # Health probe configuration
 HEALTH_PROBE_INTERVAL = 300  # 5 minutes between health probes when STOPPED
 _last_health_probe_time: float = 0
+
+# Auto-exit tracking
+_consecutive_empty_cycles: int = 0
 
 
 async def process_canonical_translations(manager: TranslationManager, batch_size: int = 10) -> int:
@@ -686,10 +693,15 @@ async def run_worker_loop():
     5. Process display translations for each enabled locale
     6. Sleep and repeat
     """
+    global _consecutive_empty_cycles
+
     logger.info("Translation worker started (new architecture)")
     logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}s")
     logger.info(f"TRANSLATION_BACKLOG_THRESHOLD: {TRANSLATION_BACKLOG_THRESHOLD} items")
     logger.info(f"HEALTH_PROBE_INTERVAL: {HEALTH_PROBE_INTERVAL}s")
+    logger.info(f"TRANSLATION_WORKER_EXIT_ON_EMPTY: {TRANSLATION_WORKER_EXIT_ON_EMPTY}")
+    if TRANSLATION_WORKER_EXIT_ON_EMPTY:
+        logger.info(f"TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT: {TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT}")
 
     # Initialize manager
     manager = TranslationManager()
@@ -720,6 +732,24 @@ async def run_worker_loop():
                     f"⏸️  Backlog ({backlog.get('total', 0)} items) below threshold "
                     f"({TRANSLATION_BACKLOG_THRESHOLD}), skipping translation this cycle"
                 )
+
+                # Auto-exit logic: treat backlog below threshold as "no work to do"
+                if TRANSLATION_WORKER_EXIT_ON_EMPTY:
+                    _consecutive_empty_cycles += 1
+                    logger.info(
+                        f"📭 Empty cycle ({_consecutive_empty_cycles}/{TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT}): "
+                        f"Backlog below threshold"
+                    )
+
+                    # Exit after N consecutive empty cycles
+                    if _consecutive_empty_cycles >= TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT:
+                        logger.info(
+                            f"✅ Translation worker stopping: "
+                            f"{_consecutive_empty_cycles} consecutive empty cycles detected. "
+                            f"Backlog below threshold ({backlog.get('total', 0)} < {TRANSLATION_BACKLOG_THRESHOLD})"
+                        )
+                        break  # Exit the while True loop
+
                 await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
                 continue
 
@@ -784,6 +814,34 @@ async def run_worker_loop():
                     f"display=[{display_summary}], "
                     f"skipped_english={skipped_english}"
                 )
+
+            # Auto-exit logic (for when backlog >= threshold but nothing was processed)
+            if TRANSLATION_WORKER_EXIT_ON_EMPTY:
+                # Check if this cycle processed nothing (quota filled)
+                # Note: skipped_english doesn't count as "work" - it's just housekeeping
+                if total_processed == 0:
+                    _consecutive_empty_cycles += 1
+                    logger.info(
+                        f"📭 Empty cycle ({_consecutive_empty_cycles}/{TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT}): "
+                        f"No items translated (quota filled, skipped_english={skipped_english})"
+                    )
+
+                    # Exit after N consecutive empty cycles
+                    if _consecutive_empty_cycles >= TRANSLATION_WORKER_EMPTY_CYCLES_BEFORE_EXIT:
+                        logger.info(
+                            f"✅ Translation worker stopping: "
+                            f"{_consecutive_empty_cycles} consecutive empty cycles detected. "
+                            f"All translation quotas filled!"
+                        )
+                        break  # Exit the while True loop
+                else:
+                    # Reset counter if we processed something
+                    if _consecutive_empty_cycles > 0:
+                        logger.debug(
+                            f"Resetting empty cycle counter (was {_consecutive_empty_cycles}): "
+                            f"total_processed={total_processed}"
+                        )
+                    _consecutive_empty_cycles = 0
 
         except Exception as e:
             # Never crash the worker loop

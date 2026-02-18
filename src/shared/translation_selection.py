@@ -216,24 +216,72 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
         if not lang_group:
             continue
 
-        # Get items in this language group
-        group_items = base_query.filter(
-            lang_group=lang_group
-        ).order_by('-hotness')  # Sort by hotness DESC
+        # Build query for ALL items in this lang_group (including already-translated)
+        # This gives us the TRUE total for percentage calculation
+        if source_langs and len(source_langs) > 0:
+            all_items_query = TrendItem.objects.filter(
+                base_lang__in=source_langs,
+                lang_group=lang_group,
+                hotness__isnull=False,
+            )
+        else:
+            all_items_query = TrendItem.objects.filter(
+                lang_group=lang_group,
+                hotness__isnull=False,
+            )
 
-        total_count = group_items.count()
+        # Exclude same-language translations (e.g., don't count English→English)
+        all_items_query = all_items_query.exclude(lang_group=target_lang_group)
+
+        # Count TOTAL items (including already-translated)
+        total_count = all_items_query.count()
 
         if total_count == 0:
             logger.debug(f"No items in lang_group={lang_group}")
             continue
 
-        # Apply selection logic
-        select_count = apply_small_bucket_logic(
+        # Count already-translated items for this lang_group
+        already_translated = ItemDerivation.objects.filter(
+            item__lang_group=lang_group,
+            item__hotness__isnull=False,
+            derivation_type='translation',
+            target_locale=target_locale,
+            status='complete'
+        )
+        if source_langs and len(source_langs) > 0:
+            already_translated = already_translated.filter(item__base_lang__in=source_langs)
+
+        # Exclude same-language translations from the count
+        already_translated = already_translated.exclude(item__lang_group=target_lang_group)
+
+        already_translated_count = already_translated.count()
+
+        # Calculate TARGET count based on TOTAL items
+        target_count = apply_small_bucket_logic(
             total_count, hot_percent, small_min, small_max
         )
 
-        # Select top items
-        selected = list(group_items[:select_count])
+        # Calculate how many MORE we need to translate
+        needed_count = max(0, target_count - already_translated_count)
+
+        logger.info(
+            f"lang_group={lang_group}: total={total_count}, "
+            f"already_translated={already_translated_count}, "
+            f"target={target_count}, needed={needed_count}"
+        )
+
+        if needed_count == 0:
+            logger.debug(f"lang_group={lang_group}: quota already filled, skipping")
+            continue
+
+        # Now select from UNTRANSLATED items only
+        # Use the existing base_query which already excludes translated items
+        group_items_untranslated = base_query.filter(
+            lang_group=lang_group
+        ).order_by('-hotness')
+
+        # Select top N untranslated items where N = needed_count
+        selected = list(group_items_untranslated[:needed_count])
         selected_items.extend(selected)
 
         logger.info(
