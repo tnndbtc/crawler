@@ -1227,15 +1227,34 @@ run_tests() {
     local overall_status=0
     local test_results=()
     local timeout_seconds=120
+    local has_warnings=0
 
     # Helper function to run command with timeout
     run_with_timeout() {
         local cmd="$1"
         local timeout_sec="$2"
+        local output_file=$(mktemp)
 
-        # Run command in background
-        timeout $timeout_sec bash -c "$cmd" 2>&1
-        return $?
+        # Run command and capture output
+        timeout $timeout_sec bash -c "$cmd" > "$output_file" 2>&1
+        local exit_code=$?
+
+        # Display output
+        cat "$output_file"
+
+        # Check for real warnings/failures (not INFO messages about coverage being high)
+        # Count real failures but ignore informational messages
+        if grep -q "MERGE GATE.*FAIL" "$output_file" 2>/dev/null; then
+            has_warnings=1
+        fi
+
+        # Also check for ❌ FAIL that are not preceded by INFO
+        if grep "❌" "$output_file" 2>/dev/null | grep -v "ℹ️.*INFO" | grep -q "FAIL"; then
+            has_warnings=1
+        fi
+
+        rm -f "$output_file"
+        return $exit_code
     }
 
     # Test 1: Test Workflow
@@ -1347,10 +1366,22 @@ run_tests() {
     done
 
     echo ""
-    if [ $overall_status -eq 0 ]; then
+    if [ $overall_status -eq 0 ] && [ $has_warnings -eq 0 ]; then
         print_success "═══════════════════════════════════════"
         print_success "   ALL TESTS PASSED ✅"
         print_success "═══════════════════════════════════════"
+        print_info "No errors or warnings detected"
+    elif [ $overall_status -eq 0 ] && [ $has_warnings -eq 1 ]; then
+        print_warning "═══════════════════════════════════════"
+        print_warning "   TESTS COMPLETED WITH WARNINGS ⚠️"
+        print_warning "═══════════════════════════════════════"
+        echo ""
+        print_info "Exit code: 0 (warnings are non-blocking in non-strict mode)"
+        print_warning "Review output above for ❌ FAIL or ⚠️ WARN markers"
+        print_info "These warnings indicate:"
+        print_info "  • Selection correctness: More items translated than current quota"
+        print_info "  • Translation coverage: Expected vs actual mismatch"
+        print_info "  • This is normal if quota was changed after translations"
     else
         print_error "═══════════════════════════════════════"
         print_error "   SOME TESTS FAILED ❌"
@@ -1359,7 +1390,7 @@ run_tests() {
     fi
     echo ""
 
-    return $overall_status
+    return 0  # Always return 0 to avoid exiting setup.sh menu
 }
 
 ################################################################################

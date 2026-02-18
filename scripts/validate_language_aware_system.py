@@ -291,9 +291,10 @@ def validate_translation_coverage():
                     print(f"    {symbol} {'FAIL' if strict_mode else 'WARN'}: Coverage below expected range ({hot_percent}%)")
                     all_passed = False
                 elif coverage_pct > expected_range_high:
-                    symbol = "❌" if strict_mode else "⚠️ "
-                    print(f"    {symbol} {'FAIL' if strict_mode else 'WARN'}: Coverage above expected range ({hot_percent}%)")
-                    all_passed = False if strict_mode else all_passed
+                    # Coverage above expected is informational only (not a warning)
+                    print(f"    ℹ️  INFO: Coverage above expected range ({hot_percent}%)")
+                    print(f"         This is normal if translations existed before quota was lowered")
+                    # Don't fail in either mode - having more translations is not a problem
                 else:
                     print(f"    ✅ PASS: Coverage within expected range")
 

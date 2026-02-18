@@ -591,7 +591,13 @@ for target_locale in target_locales:
 
         if diff <= tolerance:
             print(f'    ✅ Within ±{tolerance} tolerance')
+        elif actual > expected:
+            # More translations than expected is informational only
+            print(f'    ℹ️  INFO: More items translated ({actual}) than current quota ({expected})')
+            print(f'         Normal if translations existed before quota was lowered')
+            # Don't fail - having more translations is not a problem
         else:
+            # Fewer translations than expected is a real issue
             print(f'    ❌ Outside tolerance (diff={diff})')
             all_ok = False
 

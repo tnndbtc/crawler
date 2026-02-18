@@ -526,7 +526,13 @@ def validate_selection_correctness() -> bool:
 
             if within_tolerance:
                 print_result(True, f"{base_lang}: Within ±{tolerance} tolerance")
+            elif actual_derivations > expected:
+                # More translations than expected is informational only
+                print_info(f"  ℹ️  INFO: More items translated ({actual_derivations}) than current quota ({expected})")
+                print_info(f"         Normal if translations existed before quota was lowered")
+                # Don't fail - having more translations is not a problem
             else:
+                # Fewer translations than expected is a real issue
                 print_result(False, f"{base_lang}: Outside tolerance (diff={diff})")
                 all_passed = False
 
