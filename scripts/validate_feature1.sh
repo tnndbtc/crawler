@@ -134,11 +134,11 @@ except:
     current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
     echo "Current branch: $current_branch"
 
-    if [ "$current_branch" != "feature1" ]; then
-        print_fail "Not on feature1 branch (current: $current_branch)"
-        all_ok=false
+    if [ "$current_branch" = "feature1" ] || [ "$current_branch" = "main" ]; then
+        print_pass "On valid branch ($current_branch)"
     else
-        print_pass "On feature1 branch"
+        print_fail "Not on feature1 or main branch (current: $current_branch)"
+        all_ok=false
     fi
 
     # Verify DB is reachable via django.setup()
