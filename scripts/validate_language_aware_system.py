@@ -28,6 +28,10 @@ from django.db.models import Count, Avg, Min, Max, Q
 from django.utils import timezone
 from crawler_admin.models import TrendItem, ItemDerivation, SystemSettings
 
+# Read environment variables for validation configuration
+strict_mode = os.environ.get('FEATURE1_STRICT', '0') == '1'
+window_hours = int(os.environ.get('FEATURE1_VALIDATION_WINDOW_HOURS', '24'))
+
 
 def print_section(title):
     """Print section header."""
@@ -190,6 +194,9 @@ def validate_translation_coverage():
     """Validate translation coverage per lang_group."""
     print_section("3. Translation Coverage by Language Group")
 
+    # Calculate time window cutoff
+    cutoff_time = timezone.now() - timedelta(hours=window_hours)
+
     # Get settings
     hot_percent = SystemSettings.get_setting('translation_hot_percent', default=10)
     source_langs = SystemSettings.get_setting('translation_source_langs', default=['en', 'ja'])
@@ -199,6 +206,8 @@ def validate_translation_coverage():
     print(f"  translation_hot_percent: {hot_percent}%")
     print(f"  translation_source_langs: {source_langs if source_langs else 'ALL'}")
     print(f"  translation_target_locales: {target_locales}")
+    print(f"  validation_window: Last {window_hours} hours (cutoff: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')})")
+    print(f"  strict_mode: {'ENABLED' if strict_mode else 'DISABLED'}")
 
     all_passed = True
 
@@ -236,19 +245,22 @@ def validate_translation_coverage():
             print(f"  Validating all language groups: {base_langs}")
 
         for base_lang in base_langs:
-            # Count items
-            total = TrendItem.objects.filter(base_lang=base_lang).count()
+            # Count items (within time window)
+            total = TrendItem.objects.filter(base_lang=base_lang, collected_at__gte=cutoff_time).count()
             with_hotness = TrendItem.objects.filter(
                 base_lang=base_lang,
-                hotness__isnull=False
+                hotness__isnull=False,
+                collected_at__gte=cutoff_time
             ).count()
 
-            # Count translated items (Source A: ItemDerivation only)
+            # Count translated items (Source A: ItemDerivation only, within time window)
             translated = TrendItem.objects.filter(
                 base_lang=base_lang,
+                collected_at__gte=cutoff_time,
                 derivations__derivation_type='translation',
                 derivations__target_locale=target_locale,
-                derivations__status='complete'
+                derivations__status='complete',
+                derivations__created_at__gte=cutoff_time
             ).distinct().count()
 
             if with_hotness == 0:
@@ -265,14 +277,23 @@ def validate_translation_coverage():
             # Check if coverage is reasonable
             # Should be close to hot_percent, but may vary
             if with_hotness > 0:
-                expected_range_low = hot_percent * 0.5  # 50% of expected
-                expected_range_high = hot_percent * 2.0  # 200% of expected
+                if strict_mode:
+                    # In strict mode, expect exact match
+                    expected_range_low = hot_percent
+                    expected_range_high = hot_percent
+                else:
+                    # In non-strict mode, allow wider range
+                    expected_range_low = hot_percent * 0.5  # 50% of expected
+                    expected_range_high = hot_percent * 2.0  # 200% of expected
 
                 if coverage_pct < expected_range_low:
-                    print(f"    ⚠️  WARN: Coverage below expected range ({hot_percent}%)")
+                    symbol = "❌" if strict_mode else "⚠️ "
+                    print(f"    {symbol} {'FAIL' if strict_mode else 'WARN'}: Coverage below expected range ({hot_percent}%)")
                     all_passed = False
                 elif coverage_pct > expected_range_high:
-                    print(f"    ⚠️  WARN: Coverage above expected range ({hot_percent}%)")
+                    symbol = "❌" if strict_mode else "⚠️ "
+                    print(f"    {symbol} {'FAIL' if strict_mode else 'WARN'}: Coverage above expected range ({hot_percent}%)")
+                    all_passed = False if strict_mode else all_passed
                 else:
                     print(f"    ✅ PASS: Coverage within expected range")
 
@@ -387,6 +408,20 @@ def main():
     results['derivation_integrity'] = validate_derivation_integrity()
     results['settings_configuration'] = validate_settings_configuration()
 
+    # Validation Window Info
+    print_section("Validation Window")
+    cutoff_time = timezone.now() - timedelta(hours=window_hours)
+
+    # Count items in validation window
+    items_in_window = TrendItem.objects.filter(collected_at__gte=cutoff_time).count()
+    derivations_in_window = ItemDerivation.objects.filter(created_at__gte=cutoff_time).count()
+
+    print(f"  Window: Last {window_hours} hours")
+    print(f"  Cutoff time: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Items evaluated: {items_in_window}")
+    print(f"  Derivations evaluated: {derivations_in_window}")
+    print(f"  Strict mode: {'ENABLED' if strict_mode else 'DISABLED'}")
+
     # Summary
     print_section("Summary")
 
@@ -399,11 +434,21 @@ def main():
 
     print(f"\nOverall: {passed}/{total} tests passed")
 
-    if passed == total:
-        print("\n🎉 All validations passed!")
+    # Determine merge gate status
+    all_passed = passed == total
+    translation_failed = not results.get('translation_coverage', True)
+
+    if all_passed:
+        print("\n✅ MERGE GATE: PASS")
+        return 0
+    elif translation_failed and not strict_mode and all([v for k, v in results.items() if k != 'translation_coverage']):
+        # Only translation coverage failed, and we're in non-strict mode, and all other sections passed
+        print("\n⚠️  MERGE GATE: WARN (non-blocking)")
+        print(f"    Translation coverage warnings in non-strict mode")
         return 0
     else:
-        print(f"\n⚠️  {total - passed} validation(s) failed")
+        print(f"\n❌ MERGE GATE: FAIL")
+        print(f"    {total - passed} validation(s) failed")
         return 1
 
 

@@ -443,13 +443,64 @@ start_all_services() {
 stop_all_services() {
     print_header "Stopping All Services"
 
+    # Step 1: Stop tracked services (original behavior)
+    print_step "Stopping tracked services..."
     stop_service "translation_worker" "Translation Worker"
     stop_service "surface_worker" "Surface Worker"
     stop_service "api_server" "FastAPI Server"
     stop_service "django_admin" "Django Admin Server"
 
+    # Step 2: Kill any remaining worker processes by pattern
+    print_step "Checking for untracked worker processes..."
+
+    # Find Python processes running our workers
+    local worker_pids=$(ps aux | grep -E "(run_surface_worker|run_translation_worker|run_hotness_worker)" | grep -v grep | awk '{print $2}')
+
+    if [ ! -z "$worker_pids" ]; then
+        print_warning "Found untracked worker processes, stopping them..."
+        echo "$worker_pids" | while read pid; do
+            if [ ! -z "$pid" ]; then
+                print_info "  Killing process $pid"
+                kill $pid 2>/dev/null || kill -9 $pid 2>/dev/null
+            fi
+        done
+        sleep 1
+    else
+        print_info "No untracked workers found"
+    fi
+
+    # Step 3: Kill processes using our ports
+    print_step "Checking for processes using crawler ports..."
+
+    for port in $DJANGO_PORT $API_PORT; do
+        if is_port_in_use $port; then
+            local port_pid=$(lsof -ti :$port 2>/dev/null)
+            if [ ! -z "$port_pid" ]; then
+                print_warning "Port $port is still in use (PID: $port_pid), stopping it..."
+                kill $port_pid 2>/dev/null || kill -9 $port_pid 2>/dev/null
+                sleep 1
+            fi
+        fi
+    done
+
+    # Step 4: Clean up any stale PID files
+    print_step "Cleaning up PID files..."
+    if [ -d "$PID_DIR" ]; then
+        rm -f "$PID_DIR"/*.pid
+        print_info "PID files cleaned"
+    fi
+
     echo ""
-    print_success "All services stopped"
+    print_success "All services stopped (including untracked processes)"
+
+    # Verify nothing is running
+    local remaining=$(ps aux | grep -E "(runserver|uvicorn|run_.*_worker)" | grep -v grep | wc -l)
+    if [ $remaining -eq 0 ]; then
+        print_success "Verified: No crawler processes running"
+    else
+        print_warning "Some processes may still be running. Check with option 5 (Service Status)"
+    fi
+
     echo ""
 }
 
@@ -504,6 +555,20 @@ show_service_status() {
                 local size=$(du -h "$log_file" | cut -f1)
                 echo "  - $(basename $log_file) ($size)"
             fi
+        done
+    fi
+
+    # Show untracked processes
+    echo ""
+    print_info "Untracked Python processes:"
+    local untracked=$(ps aux | grep -E "(runserver|uvicorn|run_.*_worker\.sh)" | grep -v grep)
+    if [ -z "$untracked" ]; then
+        echo "  (none)"
+    else
+        echo "$untracked" | while read line; do
+            local pid=$(echo "$line" | awk '{print $2}')
+            local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}')
+            echo "  PID $pid: $cmd"
         done
     fi
 

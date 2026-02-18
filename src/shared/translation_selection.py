@@ -36,7 +36,7 @@ Usage:
 
 import logging
 from typing import List, Dict, Any
-from django.db.models import Q
+from django.db.models import Q, Exists, OuterRef
 from shared.language_detection import locale_to_lang_group
 
 logger = logging.getLogger(__name__)
@@ -193,13 +193,17 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     base_query = base_query.select_related('surface', 'region')
 
     # Skip same-language translations (e.g., don't translate English→English)
-    base_query = base_query.exclude(
-        lang_group=target_lang_group
-    ).exclude(
-        derivations__derivation_type='translation',
-        derivations__target_locale=target_locale,
-        derivations__status='complete'
+    base_query = base_query.exclude(lang_group=target_lang_group)
+
+    # Exclude items with existing complete translations using EXISTS subquery
+    # This is more reliable than exclude(derivations__...) which can fail with complex conditions
+    has_translation = ItemDerivation.objects.filter(
+        item_id=OuterRef('id'),
+        derivation_type='translation',
+        target_locale=target_locale,
+        status='complete'
     )
+    base_query = base_query.exclude(Exists(has_translation))
 
     # Get all language groups from source items
     # CRITICAL FIX: Force evaluation to list to avoid distinct() bug

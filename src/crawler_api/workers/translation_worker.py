@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment
 TRANSLATION_WORKER_POLL_INTERVAL = int(os.getenv('TRANSLATION_WORKER_POLL_INTERVAL', '30'))
+TRANSLATION_BACKLOG_THRESHOLD = int(os.getenv('TRANSLATION_BACKLOG_THRESHOLD', '0'))
 
 # Health probe configuration
 HEALTH_PROBE_INTERVAL = 300  # 5 minutes between health probes when STOPPED
@@ -347,44 +348,51 @@ async def process_display_translations_selective(
             )
 
             if result.success:
-                # Store in ItemDerivation
-                await sync_to_async(ItemDerivation.objects.create)(
+                # Store in ItemDerivation (use get_or_create to handle race conditions)
+                derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
                     item=item,
                     derivation_type='translation',
                     target_locale=target_locale,
-                    content_title=result.title,
-                    content_body=result.description,
-                    engine=result.engine,
-                    status='complete'
+                    defaults={
+                        'content_title': result.title,
+                        'content_body': result.description,
+                        'engine': result.engine,
+                        'status': 'complete'
+                    }
                 )
 
-                logger.info(
-                    f"✅ Selective translation complete: item #{item_data['item_id']} → {target_locale} | "
-                    f"engine: {result.engine}, hotness: {item_data['hotness']:.2f}"
-                )
-
-                # DUAL-WRITE: Also update inline fields for backward compatibility
-                # This can be removed in Phase C (cleanup) after validation
-                locale_suffix = target_locale.replace('-', '_').lower()
-                title_field = f'display_title_{locale_suffix}'
-                description_field = f'display_description_{locale_suffix}'
-                status_field = f'display_status_{locale_suffix}'
-                engine_field = f'display_engine_{locale_suffix}'
-                error_field = f'display_error_{locale_suffix}'
-
-                if hasattr(TrendItem, title_field):
-                    setattr(item, title_field, result.title)
-                    setattr(item, description_field, result.description)
-                    setattr(item, status_field, 'complete')
-                    setattr(item, engine_field, result.engine)
-                    setattr(item, error_field, None)
-                    await sync_to_async(item.save)(
-                        update_fields=[
-                            title_field, description_field,
-                            status_field, engine_field, error_field
-                        ]
+                if created:
+                    logger.info(
+                        f"✅ Selective translation complete: item #{item_data['item_id']} → {target_locale} | "
+                        f"engine: {result.engine}, hotness: {item_data['hotness']:.2f}"
                     )
-                    logger.debug(f"  (also updated inline fields for compatibility)")
+
+                    # DUAL-WRITE: Also update inline fields for backward compatibility
+                    # This can be removed in Phase C (cleanup) after validation
+                    locale_suffix = target_locale.replace('-', '_').lower()
+                    title_field = f'display_title_{locale_suffix}'
+                    description_field = f'display_description_{locale_suffix}'
+                    status_field = f'display_status_{locale_suffix}'
+                    engine_field = f'display_engine_{locale_suffix}'
+                    error_field = f'display_error_{locale_suffix}'
+
+                    if hasattr(TrendItem, title_field):
+                        setattr(item, title_field, result.title)
+                        setattr(item, description_field, result.description)
+                        setattr(item, status_field, 'complete')
+                        setattr(item, engine_field, result.engine)
+                        setattr(item, error_field, None)
+                        await sync_to_async(item.save)(
+                            update_fields=[
+                                title_field, description_field,
+                                status_field, engine_field, error_field
+                            ]
+                        )
+                        logger.debug(f"  (also updated inline fields for compatibility)")
+                else:
+                    logger.debug(
+                        f"⏭️  Translation already exists: item #{item_data['item_id']} → {target_locale} (race condition)"
+                    )
 
             elif result.engine in ('system_stopped', 'none_available'):
                 # Provider unavailable - skip this item
@@ -394,22 +402,29 @@ async def process_display_translations_selective(
                 continue
 
             else:
-                # Translation failed
-                await sync_to_async(ItemDerivation.objects.create)(
+                # Translation failed (use get_or_create to handle race conditions)
+                derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
                     item=item,
                     derivation_type='translation',
                     target_locale=target_locale,
-                    content_title='',
-                    content_body='',
-                    engine=result.engine or 'unknown',
-                    status='failed',
-                    error_message=result.error
+                    defaults={
+                        'content_title': '',
+                        'content_body': '',
+                        'engine': result.engine or 'unknown',
+                        'status': 'failed',
+                        'error_message': result.error
+                    }
                 )
 
-                logger.warning(
-                    f"❌ Selective translation failed: item #{item_data['item_id']} | "
-                    f"error: {result.error}"
-                )
+                if created:
+                    logger.warning(
+                        f"❌ Selective translation failed: item #{item_data['item_id']} | "
+                        f"error: {result.error}"
+                    )
+                else:
+                    logger.debug(
+                        f"⏭️  Failed translation already recorded: item #{item_data['item_id']} → {target_locale}"
+                    )
 
             processed_count += 1
 
@@ -580,6 +595,33 @@ def should_run_health_probe() -> bool:
     return False
 
 
+async def check_backlog_size() -> dict:
+    """
+    Check the current translation backlog size for all enabled locales.
+
+    Returns:
+        Dictionary with backlog counts per locale and total
+    """
+    from shared.translation_selection import estimate_translation_workload
+
+    backlog = {}
+    total = 0
+
+    # Check common target locales
+    for locale in ['zh-Hans', 'en']:
+        try:
+            workload = await sync_to_async(estimate_translation_workload)(locale)
+            count = workload.get('pending_count', 0)
+            backlog[locale] = count
+            total += count
+        except Exception as e:
+            logger.debug(f"Error checking backlog for {locale}: {e}")
+            backlog[locale] = 0
+
+    backlog['total'] = total
+    return backlog
+
+
 async def run_health_probes(manager: TranslationManager) -> bool:
     """
     Run health probes for unavailable providers.
@@ -645,7 +687,8 @@ async def run_worker_loop():
     6. Sleep and repeat
     """
     logger.info("Translation worker started (new architecture)")
-    logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}")
+    logger.info(f"TRANSLATION_WORKER_POLL_INTERVAL: {TRANSLATION_WORKER_POLL_INTERVAL}s")
+    logger.info(f"TRANSLATION_BACKLOG_THRESHOLD: {TRANSLATION_BACKLOG_THRESHOLD} items")
     logger.info(f"HEALTH_PROBE_INTERVAL: {HEALTH_PROBE_INTERVAL}s")
 
     # Initialize manager
@@ -661,6 +704,22 @@ async def run_worker_loop():
 
             if not config.enable_translation:
                 logger.info("Translation disabled, sleeping...")
+                await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
+                continue
+
+            # Check current backlog size
+            backlog = await check_backlog_size()
+            logger.info(
+                f"📊 Translation backlog: zh-Hans={backlog.get('zh-Hans', 0)}, "
+                f"en={backlog.get('en', 0)}, total={backlog.get('total', 0)} items"
+            )
+
+            # Skip processing if backlog is below threshold
+            if backlog.get('total', 0) < TRANSLATION_BACKLOG_THRESHOLD:
+                logger.info(
+                    f"⏸️  Backlog ({backlog.get('total', 0)} items) below threshold "
+                    f"({TRANSLATION_BACKLOG_THRESHOLD}), skipping translation this cycle"
+                )
                 await asyncio.sleep(TRANSLATION_WORKER_POLL_INTERVAL)
                 continue
 

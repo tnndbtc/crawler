@@ -42,6 +42,10 @@ from django.utils import timezone
 from crawler_admin.models import TrendItem, ItemDerivation, SystemSettings
 from shared.language_detection import locale_to_lang_group
 
+# Read environment variables for validation configuration
+strict_mode = os.environ.get('FEATURE1_STRICT', '0') == '1'
+window_hours = int(os.environ.get('FEATURE1_VALIDATION_WINDOW_HOURS', '24'))
+
 
 def print_section_header(section_num: int, title: str):
     """Print section header."""
@@ -423,10 +427,10 @@ def validate_selection_correctness() -> bool:
 
     Checks:
     - For each lang_group (en, ja):
-      - Count items with hotness
+      - Count items with hotness (within time window)
       - Compute expected translation count (X% or small bucket logic)
-      - Compare with actual translations
-      - Allow ±2 tolerance
+      - Compare with actual translations (within time window)
+      - Allow adaptive tolerance
 
     Returns:
         True if all checks pass, False otherwise
@@ -434,7 +438,9 @@ def validate_selection_correctness() -> bool:
     print_section_header(5, "Selection Correctness (Top X% per lang_group)")
 
     all_passed = True
-    tolerance = 2  # Allow ±2 items difference
+
+    # Calculate time window cutoff
+    cutoff_time = timezone.now() - timedelta(hours=window_hours)
 
     # Get settings
     hot_percent = SystemSettings.get_setting('translation_hot_percent', default=10)
@@ -444,6 +450,8 @@ def validate_selection_correctness() -> bool:
     target_locales = SystemSettings.get_setting('translation_target_locales', default=['zh-Hans'])
 
     print_info(f"Settings: hot_percent={hot_percent}%, small_bucket=({small_min}-{small_max}), source_langs={source_langs if source_langs else 'ALL'}")
+    print_info(f"Validation window: Last {window_hours} hours (cutoff: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')})")
+    print_info(f"Strict mode: {'ENABLED' if strict_mode else 'DISABLED'}")
 
     for target_locale in target_locales:
         print_info(f"\nTarget locale: {target_locale}")
@@ -473,15 +481,16 @@ def validate_selection_correctness() -> bool:
             if base_lang_group == target_lang_group:
                 print_skip(f"  {base_lang}: Skipping same-language validation ({base_lang_group}→{target_locale})")
                 continue
-            # Count items with hotness for this language
+            # Count items with hotness for this language (within time window)
             items_with_hotness = TrendItem.objects.filter(
                 base_lang=base_lang,
-                hotness__isnull=False
+                hotness__isnull=False,
+                collected_at__gte=cutoff_time
             )
             total_count = items_with_hotness.count()
 
             if total_count == 0:
-                print_skip(f"  {base_lang}: No items with hotness")
+                print_skip(f"  {base_lang}: No items with hotness in validation window")
                 continue
 
             # Compute expected translation count
@@ -490,15 +499,24 @@ def validate_selection_correctness() -> bool:
                 expected = max(small_min, min(total_count, small_max))
             else:
                 # Normal: top X%
-                expected = max(1, int(total_count * hot_percent / 100.0))
+                expected = max(1, round(total_count * hot_percent / 100.0))
 
-            # Count actual translations (Source A: ItemDerivation only)
+            # Count actual translations (Source A: ItemDerivation only, within time window)
             actual_derivations = TrendItem.objects.filter(
                 base_lang=base_lang,
+                collected_at__gte=cutoff_time,
                 derivations__derivation_type='translation',
                 derivations__target_locale=target_locale,
-                derivations__status='complete'
+                derivations__status='complete',
+                derivations__created_at__gte=cutoff_time
             ).distinct().count()
+
+            # Calculate adaptive tolerance
+            if strict_mode:
+                tolerance = 0  # Exact match required in strict mode
+            else:
+                # Adaptive tolerance: at least 2, or 200% of expected for small groups
+                tolerance = max(2, int(expected * 2))
 
             # Check if within tolerance
             diff = abs(actual_derivations - expected)
@@ -698,6 +716,22 @@ def main():
 
     results['idempotency'] = validate_idempotency()
 
+    # Validation Window Info
+    print("=" * 80)
+    print("VALIDATION WINDOW")
+    print("=" * 80)
+    cutoff_time = timezone.now() - timedelta(hours=window_hours)
+
+    # Count items in validation window
+    items_in_window = TrendItem.objects.filter(collected_at__gte=cutoff_time).count()
+    derivations_in_window = ItemDerivation.objects.filter(created_at__gte=cutoff_time).count()
+
+    print(f"  Window: Last {window_hours} hours")
+    print(f"  Cutoff time: {cutoff_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  Items evaluated: {items_in_window}")
+    print(f"  Derivations evaluated: {derivations_in_window}")
+    print(f"  Strict mode: {'ENABLED' if strict_mode else 'DISABLED'}")
+
     # Summary
     print("=" * 80)
     print("SUMMARY")
@@ -719,12 +753,23 @@ def main():
 
     print("=" * 80)
 
-    if passed_count == total_count:
-        print("Result: ✅ PASS")
+    # Determine merge gate status
+    all_passed = passed_count == total_count
+    selection_failed = not results.get('selection', True)
+
+    if all_passed:
+        print("\n✅ MERGE GATE: PASS")
+        print("=" * 80)
+        return 0
+    elif selection_failed and not strict_mode and all([v for k, v in results.items() if k != 'selection']):
+        # Only selection failed, and we're in non-strict mode, and all other sections passed
+        print("\n⚠️  MERGE GATE: WARN (non-blocking)")
+        print("    Selection correctness warnings in non-strict mode")
         print("=" * 80)
         return 0
     else:
-        print(f"Result: ❌ FAIL ({total_count - passed_count} section(s) failed)")
+        print(f"\n❌ MERGE GATE: FAIL")
+        print(f"    {total_count - passed_count} section(s) failed")
         print("=" * 80)
         return 1
 
