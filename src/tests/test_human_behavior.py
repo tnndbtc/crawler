@@ -456,6 +456,24 @@ class TestRequestRoleTracking:
             assert args[1] == 'simulated_requests'
 
     @pytest.mark.asyncio
+    async def test_head_tracks_nothing_with_simulated_no_count(self):
+        """Test that HEAD request with simulated_no_count doesn't increment counters."""
+        with patch('shared.metrics.increment_domain_metric') as mock_increment:
+            client = RateLimitedClient()
+
+            with patch.object(client, '_check_circuit_breaker', new=AsyncMock()):
+                with patch.object(client, '_wait_for_rate_limit', new=AsyncMock()):
+                    with patch.object(client, '_acquire_concurrency_slot'):
+                        with patch.object(client, '_execute_head_with_retry', new=AsyncMock(return_value=(Mock(status_code=200), 0))):
+                            try:
+                                await client.head('https://example.com/', request_role="simulated_no_count")
+                            except:
+                                pass  # Ignore errors, we're testing metrics
+
+            # Verify NO increment was called (budget already consumed atomically elsewhere)
+            mock_increment.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_adaptive_backoff_triggered_on_429(self):
         """Test that adaptive backoff is triggered on 429 response."""
         with patch('shared.human_behavior.AdaptiveBackoff.record_error') as mock_record:
