@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
-from crawler_admin.models import TrendItem
+from crawler_admin.models import TrendItem, SystemSettings
 from shared.hotness import compute_hotness, should_recompute_hotness
 
 logger = logging.getLogger(__name__)
@@ -339,6 +339,12 @@ async def run_worker_loop():
     while True:
         try:
             cycle_start = timezone.now()
+
+            # Check if hotness worker is enabled
+            if not SystemSettings.get_setting("crawler_hotness_worker_enabled", default=False):
+                logger.info("Hotness worker disabled by configuration")
+                await asyncio.sleep(HOTNESS_WORKER_POLL_INTERVAL)
+                continue
 
             # Determine batch size based on mode
             if BACKFILL_MODE == 'aggressive':
