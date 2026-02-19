@@ -12,12 +12,14 @@ Target interface: async def collect(config, cursor, limit) -> (items, cursor)
 import logging
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict, Any
+from io import BytesIO
 
 import feedparser
 from bs4 import BeautifulSoup
 
 from .adapters import normalize_rss_entry
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -232,8 +234,15 @@ async def collect_rss_feed(
     logger.info(f"Collecting from RSS feed: {rss_url} (source={source}, limit={limit})")
 
     try:
-        # Parse RSS feed (feedparser is synchronous but fast)
-        feed = feedparser.parse(rss_url)
+        # Fetch RSS feed via RateLimitedClient for resilience
+        # This gives us rate limiting, circuit breaker, and metrics
+        async with RateLimitedClient(timeout=30.0) as client:
+            response = await client.get(rss_url)
+            response.raise_for_status()
+
+            # Parse RSS feed content
+            # feedparser can parse from string or file-like object
+            feed = feedparser.parse(BytesIO(response.content))
 
         # Check for feed errors
         if feed.get('bozo', False):
@@ -318,19 +327,23 @@ async def collect_rss_with_etag(
     logger.info(f"Collecting from RSS feed with ETag: {rss_url}")
 
     try:
-        # Parse with ETag support
-        etag = cursor if cursor and not cursor.startswith('id:') else None
-        modified = None  # Could also track Last-Modified
+        # Fetch via RateLimitedClient with automatic ETag support
+        # The client handles If-None-Match headers automatically
+        async with RateLimitedClient(timeout=30.0) as client:
+            response = await client.get(rss_url)
 
-        feed = feedparser.parse(rss_url, etag=etag, modified=modified)
+            # Check if feed was not modified (304)
+            if response.status_code == 304:
+                logger.info(f"RSS feed not modified (304): {rss_url}")
+                return [], cursor  # Return same cursor
 
-        # Check if feed was not modified
-        if feed.get('status') == 304:
-            logger.info(f"RSS feed not modified (304): {rss_url}")
-            return [], cursor  # Return same cursor
+            response.raise_for_status()
 
-        # Get new ETag for next request
-        new_etag = feed.get('etag', None)
+            # Parse RSS feed content
+            feed = feedparser.parse(BytesIO(response.content))
+
+        # Get new ETag for next request (from response headers)
+        new_etag = response.headers.get('ETag')
 
         # Process entries normally
         entries = feed.get('entries', [])

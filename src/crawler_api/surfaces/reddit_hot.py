@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import httpx
 
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +82,9 @@ async def collect(
         'User-Agent': 'TrendCrawler/1.0 (Culture-Flexible Trend Aggregator)'
     }
 
-    async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
-        response = await client.get(url, params=params)
+    # Use RateLimitedClient for resilience (rate limiting, circuit breaker, etc.)
+    async with RateLimitedClient(timeout=30.0) as client:
+        response = await client.get(url, params=params, headers=headers)
         response.raise_for_status()
         data = response.json()
 

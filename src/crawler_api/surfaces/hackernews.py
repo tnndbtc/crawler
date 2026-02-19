@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import httpx
 
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +137,12 @@ async def collect(
 
     This collector uses a two-step approach:
     1. Fetch list of top story IDs
-    2. Fetch details for each story concurrently
+    2. Fetch details for each story concurrently (with concurrency limit)
 
     Config params (from TrendSurface.config_json):
         - max_stories: Maximum stories to fetch (default: 30)
         - timeout: Request timeout in seconds (default: 30)
+        - max_concurrent: Max concurrent fetches (default: 10)
 
     Args:
         config: Surface configuration
@@ -159,10 +161,12 @@ async def collect(
     """
     max_stories = min(config.get('max_stories', 30), limit)
     timeout = config.get('timeout', 30.0)
+    max_concurrent = config.get('max_concurrent', 10)
 
-    logger.info(f"Collecting Hacker News top stories: limit={max_stories}")
+    logger.info(f"Collecting Hacker News top stories: limit={max_stories}, concurrent={max_concurrent}")
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    # Use RateLimitedClient for resilience
+    async with RateLimitedClient(timeout=timeout) as client:
         try:
             # Step 1: Fetch top story IDs
             response = await client.get(TOP_STORIES_URL)
@@ -176,11 +180,19 @@ async def collect(
             # Limit to requested number of stories
             story_ids = story_ids[:max_stories]
 
-            logger.info(f"Fetching {len(story_ids)} HN stories concurrently")
+            logger.info(f"Fetching {len(story_ids)} HN stories concurrently (max {max_concurrent} at once)")
 
-            # Step 2: Fetch story details concurrently
+            # Step 2: Fetch story details concurrently with semaphore limit
+            # This prevents unconstrained fan-out that could overwhelm HN API
+            semaphore = asyncio.Semaphore(max_concurrent)
+
+            async def fetch_with_semaphore(story_id: int, rank: int):
+                """Fetch story with concurrency control."""
+                async with semaphore:
+                    return await fetch_story(client, story_id, rank)
+
             tasks = [
-                fetch_story(client, story_id, rank)
+                fetch_with_semaphore(story_id, rank)
                 for rank, story_id in enumerate(story_ids, start=1)
             ]
 

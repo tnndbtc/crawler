@@ -1210,7 +1210,186 @@ update_dependencies() {
 # Testing
 ################################################################################
 
-run_tests() {
+################################################################################
+# Test Helper Functions
+################################################################################
+
+# Helper function to run command with timeout
+run_with_timeout() {
+    local cmd="$1"
+    local timeout_sec="$2"
+    local output_file=$(mktemp)
+    local has_warnings=0
+
+    # Run command and capture output
+    timeout $timeout_sec bash -c "$cmd" > "$output_file" 2>&1
+    local exit_code=$?
+
+    # Display output
+    cat "$output_file"
+
+    # Check for real warnings/failures (not INFO messages about coverage being high)
+    # Count real failures but ignore informational messages
+    if grep -q "MERGE GATE.*FAIL" "$output_file" 2>/dev/null; then
+        has_warnings=1
+    fi
+
+    # Also check for ❌ FAIL that are not preceded by INFO
+    if grep "❌" "$output_file" 2>/dev/null | grep -v "ℹ️.*INFO" | grep -q "FAIL"; then
+        has_warnings=1
+    fi
+
+    rm -f "$output_file"
+    return $exit_code
+}
+
+################################################################################
+# Individual Test Functions
+################################################################################
+
+run_test_workflow() {
+    print_header "Test Workflow (DRY_RUN mode)"
+    local timeout_seconds=120
+
+    if [ ! -f "${SCRIPT_DIR}/scripts/test_workflow.sh" ]; then
+        print_error "Test script not found: scripts/test_workflow.sh"
+        return 1
+    fi
+
+    print_info "Running test workflow with ${timeout_seconds}s timeout..."
+    echo ""
+
+    if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_workflow.sh" $timeout_seconds; then
+        echo ""
+        print_success "✅ Test Workflow: PASSED"
+    else
+        local exit_code=$?
+        echo ""
+        if [ $exit_code -eq 124 ]; then
+            print_warning "⏱️  Test Workflow: TIMEOUT (exceeded ${timeout_seconds}s)"
+        else
+            print_error "❌ Test Workflow: FAILED"
+        fi
+        return 1
+    fi
+}
+
+run_validate_feature1() {
+    print_header "Validate Feature 1 (Language-Aware System)"
+    local timeout_seconds=120
+
+    if [ ! -f "${SCRIPT_DIR}/scripts/validate_feature1.sh" ]; then
+        print_error "Test script not found: scripts/validate_feature1.sh"
+        return 1
+    fi
+
+    print_info "Running Feature 1 validation with ${timeout_seconds}s timeout..."
+    echo ""
+
+    if run_with_timeout "bash ${SCRIPT_DIR}/scripts/validate_feature1.sh" $timeout_seconds; then
+        echo ""
+        print_success "✅ Validate Feature 1: PASSED"
+    else
+        local exit_code=$?
+        echo ""
+        if [ $exit_code -eq 124 ]; then
+            print_warning "⏱️  Validate Feature 1: TIMEOUT (exceeded ${timeout_seconds}s)"
+        else
+            print_error "❌ Validate Feature 1: FAILED"
+        fi
+        return 1
+    fi
+}
+
+run_validate_feature1_e2e() {
+    print_header "Validate Feature 1 End-to-End"
+    local timeout_seconds=120
+
+    if [ ! -f "${SCRIPT_DIR}/scripts/validate_feature1_end_to_end.py" ]; then
+        print_error "Test script not found: scripts/validate_feature1_end_to_end.py"
+        return 1
+    fi
+
+    print_info "Running Feature 1 E2E validation with ${timeout_seconds}s timeout..."
+    echo ""
+
+    cd "$SCRIPT_DIR"
+    if run_with_timeout "python3 scripts/validate_feature1_end_to_end.py" $timeout_seconds; then
+        echo ""
+        print_success "✅ Validate Feature 1 E2E: PASSED"
+    else
+        local exit_code=$?
+        echo ""
+        if [ $exit_code -eq 124 ]; then
+            print_warning "⏱️  Validate Feature 1 E2E: TIMEOUT (exceeded ${timeout_seconds}s)"
+        else
+            print_error "❌ Validate Feature 1 E2E: FAILED"
+        fi
+        return 1
+    fi
+}
+
+run_validate_language_aware() {
+    print_header "Validate Language-Aware System"
+    local timeout_seconds=120
+
+    if [ ! -f "${SCRIPT_DIR}/scripts/validate_language_aware_system.py" ]; then
+        print_error "Test script not found: scripts/validate_language_aware_system.py"
+        return 1
+    fi
+
+    print_info "Running language-aware system validation with ${timeout_seconds}s timeout..."
+    echo ""
+
+    cd "$SCRIPT_DIR"
+    if run_with_timeout "python3 scripts/validate_language_aware_system.py" $timeout_seconds; then
+        echo ""
+        print_success "✅ Validate Language-Aware System: PASSED"
+    else
+        local exit_code=$?
+        echo ""
+        if [ $exit_code -eq 124 ]; then
+            print_warning "⏱️  Validate Language-Aware System: TIMEOUT (exceeded ${timeout_seconds}s)"
+        else
+            print_error "❌ Validate Language-Aware System: FAILED"
+        fi
+        return 1
+    fi
+}
+
+run_good_citizen_validation() {
+    print_header "Good Citizen Feature Validation"
+    local timeout_seconds=120
+
+    if [ ! -f "${SCRIPT_DIR}/scripts/test_good_citizen.sh" ]; then
+        print_error "Test script not found: scripts/test_good_citizen.sh"
+        return 1
+    fi
+
+    print_info "Running Good Citizen validation with ${timeout_seconds}s timeout..."
+    print_info "Tests: Rate limiting, Circuit breaker, HTTP caching"
+    echo ""
+
+    if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_good_citizen.sh" $timeout_seconds; then
+        echo ""
+        print_success "✅ Good Citizen Validation: PASSED"
+    else
+        local exit_code=$?
+        echo ""
+        if [ $exit_code -eq 124 ]; then
+            print_warning "⏱️  Good Citizen Validation: TIMEOUT (exceeded ${timeout_seconds}s)"
+        else
+            print_error "❌ Good Citizen Validation: FAILED"
+        fi
+        return 1
+    fi
+}
+
+################################################################################
+# Run All Tests
+################################################################################
+
+run_all_tests() {
     print_header "Run All Tests & Validations"
 
     echo ""
@@ -1220,6 +1399,7 @@ run_tests() {
     echo "  3) Validate Feature 1 End-to-End"
     echo "  4) Validate Language-Aware System"
     echo "  5) Verify Translation Selection Fix (DISABLED - slow on large datasets)"
+    echo "  6) Good Citizen Feature Validation (Rate limiting, Circuit breaker, HTTP caching)"
     echo ""
     print_warning "Each test has a 120-second timeout to prevent hanging"
     echo ""
@@ -1229,36 +1409,8 @@ run_tests() {
     local timeout_seconds=120
     local has_warnings=0
 
-    # Helper function to run command with timeout
-    run_with_timeout() {
-        local cmd="$1"
-        local timeout_sec="$2"
-        local output_file=$(mktemp)
-
-        # Run command and capture output
-        timeout $timeout_sec bash -c "$cmd" > "$output_file" 2>&1
-        local exit_code=$?
-
-        # Display output
-        cat "$output_file"
-
-        # Check for real warnings/failures (not INFO messages about coverage being high)
-        # Count real failures but ignore informational messages
-        if grep -q "MERGE GATE.*FAIL" "$output_file" 2>/dev/null; then
-            has_warnings=1
-        fi
-
-        # Also check for ❌ FAIL that are not preceded by INFO
-        if grep "❌" "$output_file" 2>/dev/null | grep -v "ℹ️.*INFO" | grep -q "FAIL"; then
-            has_warnings=1
-        fi
-
-        rm -f "$output_file"
-        return $exit_code
-    }
-
     # Test 1: Test Workflow
-    print_step "Test 1/5: Running test workflow (DRY_RUN mode, timeout: ${timeout_seconds}s)..."
+    print_step "Test 1/6: Running test workflow (DRY_RUN mode, timeout: ${timeout_seconds}s)..."
     if [ -f "${SCRIPT_DIR}/scripts/test_workflow.sh" ]; then
         if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_workflow.sh" $timeout_seconds; then
             test_results+=("✅ Test Workflow: PASSED")
@@ -1277,7 +1429,7 @@ run_tests() {
     echo ""
 
     # Test 2: Validate Feature 1
-    print_step "Test 2/5: Running Feature 1 validation (timeout: ${timeout_seconds}s)..."
+    print_step "Test 2/6: Running Feature 1 validation (timeout: ${timeout_seconds}s)..."
     if [ -f "${SCRIPT_DIR}/scripts/validate_feature1.sh" ]; then
         if run_with_timeout "bash ${SCRIPT_DIR}/scripts/validate_feature1.sh" $timeout_seconds; then
             test_results+=("✅ Validate Feature 1: PASSED")
@@ -1296,7 +1448,7 @@ run_tests() {
     echo ""
 
     # Test 3: Validate Feature 1 End-to-End
-    print_step "Test 3/5: Running Feature 1 end-to-end validation (timeout: ${timeout_seconds}s)..."
+    print_step "Test 3/6: Running Feature 1 end-to-end validation (timeout: ${timeout_seconds}s)..."
     if [ -f "${SCRIPT_DIR}/scripts/validate_feature1_end_to_end.py" ]; then
         cd "$SCRIPT_DIR"
         if run_with_timeout "python3 scripts/validate_feature1_end_to_end.py" $timeout_seconds; then
@@ -1316,7 +1468,7 @@ run_tests() {
     echo ""
 
     # Test 4: Validate Language-Aware System
-    print_step "Test 4/5: Running language-aware system validation (timeout: ${timeout_seconds}s)..."
+    print_step "Test 4/6: Running language-aware system validation (timeout: ${timeout_seconds}s)..."
     if [ -f "${SCRIPT_DIR}/scripts/validate_language_aware_system.py" ]; then
         cd "$SCRIPT_DIR"
         if run_with_timeout "python3 scripts/validate_language_aware_system.py" $timeout_seconds; then
@@ -1356,6 +1508,25 @@ run_tests() {
     test_results+=("⏭️  Verify Translation Selection Fix: SKIPPED (disabled - slow on large datasets)")
     echo ""
 
+    # Test 6: Good Citizen Feature Validation
+    print_step "Test 6/6: Running Good Citizen feature validation (timeout: ${timeout_seconds}s)..."
+    if [ -f "${SCRIPT_DIR}/scripts/test_good_citizen.sh" ]; then
+        if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_good_citizen.sh" $timeout_seconds; then
+            test_results+=("✅ Good Citizen Validation: PASSED")
+        else
+            local exit_code=$?
+            if [ $exit_code -eq 124 ]; then
+                test_results+=("⏱️  Good Citizen Validation: TIMEOUT (exceeded ${timeout_seconds}s)")
+            else
+                test_results+=("❌ Good Citizen Validation: FAILED")
+            fi
+            overall_status=1
+        fi
+    else
+        test_results+=("⚠️  Good Citizen Validation: SKIPPED (script not found)")
+    fi
+    echo ""
+
     # Print summary
     echo ""
     print_header "Test Summary"
@@ -1391,6 +1562,80 @@ run_tests() {
     echo ""
 
     return 0  # Always return 0 to avoid exiting setup.sh menu
+}
+
+################################################################################
+# Test Menu
+################################################################################
+
+test_menu() {
+    while true; do
+        clear
+        print_header "Test & Validation Menu"
+
+        echo ""
+        echo -e "${BOLD}Run Tests:${NC}"
+        echo "  1)  Run All Tests (complete validation suite)"
+        echo ""
+        echo -e "${BOLD}Individual Tests:${NC}"
+        echo "  2)  Test Workflow (DRY_RUN mode)"
+        echo "  3)  Validate Feature 1 (Language-Aware System)"
+        echo "  4)  Validate Feature 1 End-to-End"
+        echo "  5)  Validate Language-Aware System"
+        echo "  6)  Good Citizen Feature Validation"
+        echo ""
+        echo "  0)  Return to Main Menu"
+        echo ""
+        echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+
+        read -p "Select an option: " choice
+
+        case $choice in
+            1)
+                run_all_tests
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            2)
+                run_test_workflow
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            3)
+                run_validate_feature1
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            4)
+                run_validate_feature1_e2e
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            5)
+                run_validate_language_aware
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            6)
+                run_good_citizen_validation
+                echo ""
+                print_info "Press Enter to continue..."
+                read
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                print_error "Invalid option: $choice"
+                sleep 2
+                ;;
+        esac
+    done
 }
 
 ################################################################################
@@ -1741,7 +1986,7 @@ main_loop() {
             14) restore_database ;;
             15) run_migrations ;;
             16) reset_database ;;
-            17) run_tests ;;
+            17) test_menu ;;
             18) setup_migrated_collectors ;;
             0)
                 echo ""

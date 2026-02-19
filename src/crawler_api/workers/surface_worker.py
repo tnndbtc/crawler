@@ -39,6 +39,8 @@ from crawler_admin.models import TrendSurface, TrendItem, CrawlRun
 from crawler_api.surfaces.registry import get_collector
 from shared.language_detection import classify_item_language
 from shared.hotness import compute_hotness
+from shared.jitter import jittered_sleep
+from shared.http_client import CircuitBreakerOpen
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +232,20 @@ async def execute_surface(surface: TrendSurface) -> None:
 
         logger.error(f"CrawlRun #{run.id} timed out: {error_msg}")
 
+    except CircuitBreakerOpen as e:
+        # Circuit breaker is open for this domain - skip gracefully
+        error_msg = f"Circuit breaker open: {e}"
+        run.status = 'failed'
+        run.error_message = error_msg
+        run.finished_at = timezone.now()
+        await sync_to_async(run.save)()
+
+        surface.last_error = error_msg
+        # Don't update next_run_at - respect the circuit breaker cooldown
+        await sync_to_async(surface.save)(update_fields=['last_error'])
+
+        logger.warning(f"CrawlRun #{run.id}: {error_msg}")
+
     except Exception as e:
         # Other failure
         error_msg = str(e)
@@ -313,8 +329,8 @@ async def run_worker_loop():
             # Never crash the worker loop
             logger.error(f"Worker loop error: {e}", exc_info=True)
 
-        # Sleep before next poll
-        await asyncio.sleep(SURFACE_WORKER_POLL_INTERVAL)
+        # Sleep before next poll with jitter to avoid thundering herd
+        await jittered_sleep(SURFACE_WORKER_POLL_INTERVAL)
 
 
 def main():

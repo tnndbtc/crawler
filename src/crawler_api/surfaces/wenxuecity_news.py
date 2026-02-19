@@ -24,6 +24,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .adapters import raw_item_to_collected_item
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +82,16 @@ async def collect(
     collected_items = []
 
     try:
-        async with httpx.AsyncClient(
+        # Use RateLimitedClient for resilience
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        async with RateLimitedClient(
             timeout=30.0,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+            follow_redirects=True
         ) as client:
             # Fetch homepage
-            response = await client.get(BASE_URL)
+            response = await client.get(BASE_URL, headers=headers)
             response.raise_for_status()
 
             # Parse HTML

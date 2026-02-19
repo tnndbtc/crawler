@@ -9,6 +9,9 @@ Models:
 5. CrawlRun - Execution audit log (observability)
 6. ItemDerivation - Derived content (translations, summaries, etc.)
 7. SystemSettings - Admin-configurable system settings
+8. DomainPolicy - Per-domain rate limiting and circuit breaker state
+9. URLCache - HTTP caching metadata (ETag, Last-Modified)
+10. DomainMetrics - Time-series observability data for HTTP requests
 
 Note: TranslationSettings has been removed. Use translation.models.TranslationConfig instead.
 
@@ -813,3 +816,359 @@ class SystemSettings(models.Model):
             }
         )
         return obj
+
+
+class DomainPolicy(models.Model):
+    """
+    Per-domain rate limiting and circuit breaker state.
+
+    Mirrors the ProviderHealth pattern from translation.models.ProviderHealth
+    for HTTP request resilience. Enables crawler to be a "good citizen" by:
+    - Respecting per-domain rate limits (RPM)
+    - Limiting concurrent connections
+    - Opening circuit breaker after repeated failures
+    - Adaptive backoff when receiving 429/403
+
+    Circuit breaker states:
+    - closed: Normal operation (default)
+    - open: Circuit breaker tripped, blocking all requests
+    - half_open: Testing recovery with single request
+    """
+
+    CIRCUIT_STATE_CHOICES = [
+        ('closed', 'Closed (Normal)'),
+        ('open', 'Open (Blocked)'),
+        ('half_open', 'Half-Open (Testing)'),
+    ]
+
+    domain = models.CharField(
+        max_length=255,
+        primary_key=True,
+        help_text="Domain name (e.g., 'news.ycombinator.com')"
+    )
+
+    # Rate limiting
+    max_rpm = models.IntegerField(
+        default=30,
+        help_text="Requests per minute limit (default: 30)"
+    )
+    max_concurrent = models.IntegerField(
+        default=5,
+        help_text="Max simultaneous requests (default: 5)"
+    )
+
+    # Circuit breaker
+    circuit_state = models.CharField(
+        max_length=20,
+        choices=CIRCUIT_STATE_CHOICES,
+        default='closed',
+        help_text="Current circuit breaker state"
+    )
+    circuit_failure_threshold = models.IntegerField(
+        default=5,
+        help_text="Consecutive failures before opening circuit (default: 5)"
+    )
+    circuit_cooldown_seconds = models.IntegerField(
+        default=300,
+        help_text="Cooldown duration when circuit is open (default: 300s = 5min)"
+    )
+    consecutive_failures = models.IntegerField(
+        default=0,
+        help_text="Current consecutive failure count"
+    )
+
+    # Adaptive backoff
+    current_backoff_multiplier = models.FloatField(
+        default=1.0,
+        help_text="Current backoff multiplier (1.0 = normal, >1.0 = slowed down)"
+    )
+    backoff_decay_rate = models.FloatField(
+        default=0.1,
+        help_text="How fast backoff recovers on success (default: 0.1 = 10% per success)"
+    )
+
+    # Timestamps
+    last_request_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last request timestamp (for rate limiting)"
+    )
+    last_success_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last successful request timestamp"
+    )
+    last_failure_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last failure timestamp"
+    )
+    circuit_opened_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When circuit was opened (for cooldown calculation)"
+    )
+
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Domain Policy"
+        verbose_name_plural = "Domain Policies"
+        ordering = ['domain']
+        indexes = [
+            models.Index(fields=['circuit_state']),
+        ]
+
+    def __str__(self):
+        return f"{self.domain} ({self.get_circuit_state_display()})"
+
+    @property
+    def is_circuit_open(self) -> bool:
+        """Check if circuit is open (blocking requests)."""
+        return self.circuit_state == 'open'
+
+    @property
+    def is_cooldown_expired(self) -> bool:
+        """Check if circuit cooldown period has expired."""
+        if not self.circuit_opened_at:
+            return True
+        elapsed = (timezone.now() - self.circuit_opened_at).total_seconds()
+        return elapsed >= self.circuit_cooldown_seconds
+
+    def record_success(self):
+        """Record successful request and update state."""
+        self.last_success_at = timezone.now()
+        self.last_request_at = timezone.now()
+        self.consecutive_failures = 0
+
+        # Decay backoff on success
+        if self.current_backoff_multiplier > 1.0:
+            self.current_backoff_multiplier = max(
+                1.0,
+                self.current_backoff_multiplier - self.backoff_decay_rate
+            )
+
+        # Transition from half_open to closed on success
+        if self.circuit_state == 'half_open':
+            self.circuit_state = 'closed'
+            self.circuit_opened_at = None
+
+        self.save()
+
+    def record_failure(self, error_type: str = 'generic'):
+        """
+        Record failed request and potentially open circuit.
+
+        Args:
+            error_type: 'rate_limit' (429), 'forbidden' (403), 'server_error' (5xx), 'generic'
+        """
+        self.last_failure_at = timezone.now()
+        self.last_request_at = timezone.now()
+        self.consecutive_failures += 1
+
+        # Increase backoff on rate limit or forbidden
+        if error_type in ['rate_limit', 'forbidden']:
+            self.current_backoff_multiplier = min(
+                5.0,  # Cap at 5x slowdown
+                self.current_backoff_multiplier * 1.5
+            )
+
+        # Open circuit if threshold exceeded
+        if self.consecutive_failures >= self.circuit_failure_threshold:
+            self.circuit_state = 'open'
+            self.circuit_opened_at = timezone.now()
+
+        self.save()
+
+    def transition_to_half_open(self):
+        """Transition from open to half_open state."""
+        if self.circuit_state == 'open':
+            self.circuit_state = 'half_open'
+            self.save()
+
+    @classmethod
+    def get_or_create_policy(cls, domain: str) -> 'DomainPolicy':
+        """Get or create policy for domain with defaults."""
+        obj, _ = cls.objects.get_or_create(domain=domain)
+        return obj
+
+
+class URLCache(models.Model):
+    """
+    HTTP caching metadata for ETags and Last-Modified headers.
+
+    Enables efficient HTTP caching by:
+    - Storing ETag and Last-Modified from responses
+    - Sending If-None-Match and If-Modified-Since on subsequent requests
+    - Handling 304 Not Modified responses to skip re-processing
+
+    URL normalization:
+    - Query params sorted alphabetically
+    - Tracking params stripped (utm_*, fbclid, etc.)
+    - Hash computed from normalized URL
+    """
+
+    url_hash = models.CharField(
+        max_length=64,
+        primary_key=True,
+        help_text="SHA256 hash of normalized URL"
+    )
+    url = models.TextField(
+        help_text="Original URL"
+    )
+
+    # HTTP caching headers
+    etag = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="ETag header value from response"
+    )
+    last_modified = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Last-Modified header value from response"
+    )
+
+    # Cache expiration
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Cache expiration timestamp (from Cache-Control or Expires header)"
+    )
+
+    # Metadata
+    last_validated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Last time this cache entry was validated (touched)"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When this cache entry was created"
+    )
+
+    class Meta:
+        verbose_name = "URL Cache"
+        verbose_name_plural = "URL Caches"
+        ordering = ['-last_validated_at']
+        indexes = [
+            models.Index(fields=['expires_at']),
+            models.Index(fields=['-last_validated_at']),
+        ]
+
+    def __str__(self):
+        return f"Cache: {self.url[:50]}..."
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if cache entry is expired."""
+        if not self.expires_at:
+            return False
+        return timezone.now() >= self.expires_at
+
+    def touch(self):
+        """Update last_validated_at timestamp."""
+        self.last_validated_at = timezone.now()
+        self.save(update_fields=['last_validated_at'])
+
+
+class DomainMetrics(models.Model):
+    """
+    Time-series observability data for HTTP requests.
+
+    Aggregates metrics per domain per hour for:
+    - Request counts by status code (2xx, 4xx, 5xx)
+    - Latency percentiles (p50, p95)
+    - Retry counts
+    - Circuit breaker open duration
+
+    Used by management command `python manage.py domain_report` for visibility.
+    """
+
+    domain = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Domain name (e.g., 'news.ycombinator.com')"
+    )
+    hour_bucket = models.DateTimeField(
+        db_index=True,
+        help_text="Hourly aggregation bucket (truncated to hour)"
+    )
+
+    # Request counts by status
+    requests_2xx = models.IntegerField(
+        default=0,
+        help_text="Successful requests (200-299)"
+    )
+    requests_4xx = models.IntegerField(
+        default=0,
+        help_text="Client errors (400-499)"
+    )
+    requests_5xx = models.IntegerField(
+        default=0,
+        help_text="Server errors (500-599)"
+    )
+    requests_429 = models.IntegerField(
+        default=0,
+        help_text="Rate limit errors (429 Too Many Requests)"
+    )
+    requests_403 = models.IntegerField(
+        default=0,
+        help_text="Forbidden errors (403)"
+    )
+
+    # Latency metrics (milliseconds)
+    latency_p50 = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Median latency in milliseconds"
+    )
+    latency_p95 = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="95th percentile latency in milliseconds"
+    )
+
+    # Retry metrics
+    retry_count = models.IntegerField(
+        default=0,
+        help_text="Total number of retries performed"
+    )
+
+    # Circuit breaker metrics
+    circuit_open_duration_seconds = models.IntegerField(
+        default=0,
+        help_text="Total seconds circuit was open in this hour"
+    )
+
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [['domain', 'hour_bucket']]
+        verbose_name = "Domain Metrics"
+        verbose_name_plural = "Domain Metrics"
+        ordering = ['-hour_bucket', 'domain']
+        indexes = [
+            models.Index(fields=['domain', '-hour_bucket']),
+            models.Index(fields=['-hour_bucket']),
+        ]
+
+    def __str__(self):
+        return f"{self.domain} @ {self.hour_bucket.strftime('%Y-%m-%d %H:00')}"
+
+    @property
+    def total_requests(self) -> int:
+        """Total requests in this hour."""
+        return self.requests_2xx + self.requests_4xx + self.requests_5xx
+
+    @property
+    def success_rate(self) -> float:
+        """Success rate as percentage."""
+        if self.total_requests == 0:
+            return 0.0
+        return (self.requests_2xx / self.total_requests) * 100

@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,8 @@ async def collect(
     )
 
     # Make API request(s) - keep client open for dual-mode
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Use RateLimitedClient for resilience
+    async with RateLimitedClient(timeout=30.0) as client:
         # Fetch trending videos
         response = await client.get(
             f"{YOUTUBE_API_BASE}/videos",
