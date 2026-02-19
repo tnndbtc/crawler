@@ -6,6 +6,7 @@ Tasks:
 """
 import asyncio
 import logging
+from asgiref.sync import async_to_sync
 from celery import shared_task
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def flush_simulation_metrics_to_db():
 
     try:
         # Run async flush function
-        asyncio.run(flush_redis_to_db())
+        async_to_sync(flush_redis_to_db)()
         logger.info("Successfully flushed simulation metrics to DB")
     except Exception as e:
         logger.error(f"Failed to flush simulation metrics: {e}", exc_info=True)

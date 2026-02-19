@@ -710,7 +710,7 @@ class RateLimitedClient:
     async def head(
         self,
         url: str,
-        request_role: str = "simulated",
+        request_role: str = "direct",
         **kwargs
     ) -> httpx.Response:
         """

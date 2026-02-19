@@ -416,8 +416,8 @@ class TestRequestRoleTracking:
             assert args[1] == 'direct_requests'
 
     @pytest.mark.asyncio
-    async def test_head_tracks_simulated_by_default(self):
-        """Test that HEAD request tracks as simulated by default."""
+    async def test_head_tracks_direct_by_default(self):
+        """Test that HEAD request tracks as direct by default."""
         with patch('shared.metrics.increment_domain_metric') as mock_increment:
             client = RateLimitedClient()
 
@@ -427,6 +427,26 @@ class TestRequestRoleTracking:
                         with patch.object(client, '_execute_head_with_retry', new=AsyncMock(return_value=(Mock(status_code=200), 0))):
                             try:
                                 await client.head('https://example.com/')
+                            except:
+                                pass  # Ignore errors, we're testing metrics
+
+            # Verify direct_requests was incremented
+            mock_increment.assert_called()
+            args = mock_increment.call_args[0]
+            assert args[1] == 'direct_requests'
+
+    @pytest.mark.asyncio
+    async def test_head_tracks_simulated_when_specified(self):
+        """Test that HEAD request tracks as simulated when explicitly specified."""
+        with patch('shared.metrics.increment_domain_metric') as mock_increment:
+            client = RateLimitedClient()
+
+            with patch.object(client, '_check_circuit_breaker', new=AsyncMock()):
+                with patch.object(client, '_wait_for_rate_limit', new=AsyncMock()):
+                    with patch.object(client, '_acquire_concurrency_slot'):
+                        with patch.object(client, '_execute_head_with_retry', new=AsyncMock(return_value=(Mock(status_code=200), 0))):
+                            try:
+                                await client.head('https://example.com/', request_role="simulated")
                             except:
                                 pass  # Ignore errors, we're testing metrics
 
