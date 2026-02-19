@@ -453,8 +453,8 @@ stop_all_services() {
     # Step 2: Kill any remaining worker processes by pattern
     print_step "Checking for untracked worker processes..."
 
-    # Find Python processes running our workers
-    local worker_pids=$(ps aux | grep -E "(run_surface_worker|run_translation_worker|run_hotness_worker)" | grep -v grep | awk '{print $2}')
+    # Find ALL Python worker processes (scripts and actual workers)
+    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
 
     if [ ! -z "$worker_pids" ]; then
         print_warning "Found untracked worker processes, stopping them..."
@@ -529,6 +529,7 @@ show_service_status() {
 
         printf "%-26s " "$service_desc"
 
+        # Check if tracked by setup.sh first
         if is_service_running "$service_name"; then
             local pid=$(get_service_pid "$service_name")
             printf "${GREEN}%-11s${NC} " "Running"
@@ -539,9 +540,23 @@ show_service_status() {
                 printf "%s\n" "N/A"
             fi
         else
-            printf "${RED}%-11s${NC} " "Stopped"
-            printf "%-9s " "-"
-            printf "%s\n" "-"
+            # Check if process is running externally (not tracked by setup.sh)
+            local external_pid=""
+            if [ "$service_name" == "translation_worker" ]; then
+                external_pid=$(ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            elif [ "$service_name" == "surface_worker" ]; then
+                external_pid=$(ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            fi
+
+            if [ ! -z "$external_pid" ]; then
+                printf "${GREEN}%-11s${NC} " "Running"
+                printf "${YELLOW}%-9s${NC} " "$external_pid"
+                printf "${YELLOW}%s${NC}\n" "(external)"
+            else
+                printf "${RED}%-11s${NC} " "Stopped"
+                printf "%-9s " "-"
+                printf "%s\n" "-"
+            fi
         fi
     done
 
@@ -555,20 +570,6 @@ show_service_status() {
                 local size=$(du -h "$log_file" | cut -f1)
                 echo "  - $(basename $log_file) ($size)"
             fi
-        done
-    fi
-
-    # Show untracked processes
-    echo ""
-    print_info "Untracked Python processes:"
-    local untracked=$(ps aux | grep -E "(runserver|uvicorn|run_.*_worker\.sh)" | grep -v grep)
-    if [ -z "$untracked" ]; then
-        echo "  (none)"
-    else
-        echo "$untracked" | while read line; do
-            local pid=$(echo "$line" | awk '{print $2}')
-            local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}')
-            echo "  PID $pid: $cmd"
         done
     fi
 
