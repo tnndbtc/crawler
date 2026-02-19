@@ -598,6 +598,20 @@ class SystemSettingsAdmin(admin.ModelAdmin):
 
     readonly_fields = ['updated_at']
 
+    def get_form(self, request, obj=None, **kwargs):
+        """Customize form labels based on the setting key."""
+        form = super().get_form(request, obj, **kwargs)
+
+        # Show "Percent(%)" label only for translation_hot_percent
+        if obj is not None and obj.key == 'translation_hot_percent':
+            form.base_fields['value_json'].label = 'Percent (%)'
+            form.base_fields['value_json'].help_text = (
+                'Percentage value: top X% of items by hotness to translate '
+                '(e.g., 10 = top 10%, 0.001 = top 0.001%)'
+            )
+
+        return form
+
     def value_display(self, obj):
         """Display value with truncation for long values."""
         value_str = str(obj.value_json)
