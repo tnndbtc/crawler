@@ -384,9 +384,8 @@ async def list_trends(
     - Returns next_cursor for fetching more items
     """
     # Build base queryset
-    # LANGUAGE-AWARE: Sort by hotness first, then collected_at
-    # Items WITH hotness appear first (ranked by hotness)
-    # Items WITHOUT hotness appear after (ranked by recency)
+    # Sort by recency first (newest items at top), then hotness for tie-breaking
+    # This ensures fresh content always surfaces, while still respecting engagement
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
         'translations',
         'derivations'  # Join derivations table for selective translation
@@ -396,7 +395,7 @@ async def list_trends(
             default=Value(0),
             output_field=IntegerField()
         )
-    ).order_by('-has_hotness', '-hotness', '-collected_at', '-id')  # has_hotness first, then hotness, then recency, then ID for stability
+    ).order_by('-collected_at', '-hotness', '-id')  # Recency first, then hotness, then ID for stability
 
     if region:
         queryset = queryset.filter(region__key=region)
