@@ -909,6 +909,26 @@ class DomainPolicy(models.Model):
         help_text="When circuit was opened (for cooldown calculation)"
     )
 
+    # Human browsing simulation fields
+    simulation_config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Per-domain simulation configuration overrides"
+    )
+    simulation_penalty_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Adaptive backoff penalty expiration (null = no penalty active)"
+    )
+    simulation_delay_multiplier = models.FloatField(
+        default=1.0,
+        help_text="Delay multiplier during penalty (default: 1.0 = normal, 2.5 = slower)"
+    )
+    simulation_probability_multiplier = models.FloatField(
+        default=1.0,
+        help_text="Probability multiplier during penalty (default: 1.0 = normal, 0.5 = reduced)"
+    )
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1142,6 +1162,24 @@ class DomainMetrics(models.Model):
     circuit_open_duration_seconds = models.IntegerField(
         default=0,
         help_text="Total seconds circuit was open in this hour"
+    )
+
+    # Human browsing simulation metrics
+    direct_requests = models.IntegerField(
+        default=0,
+        help_text="Normal crawler requests (actual content fetches)"
+    )
+    simulated_requests = models.IntegerField(
+        default=0,
+        help_text="Human-like simulation requests (homepage visits, favicon prefetch)"
+    )
+    simulation_fallbacks = models.IntegerField(
+        default=0,
+        help_text="Failed simulation attempts (errors, timeouts)"
+    )
+    simulation_budget_blocked = models.IntegerField(
+        default=0,
+        help_text="Simulation requests blocked by budget enforcement"
     )
 
     # Metadata

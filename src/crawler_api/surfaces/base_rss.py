@@ -20,6 +20,8 @@ from bs4 import BeautifulSoup
 from .adapters import normalize_rss_entry
 from .collector_interface import CollectedItem
 from shared.http_client import RateLimitedClient
+from shared.human_behavior import HumanBrowsingSession
+from shared.url_utils import extract_domain
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +239,14 @@ async def collect_rss_feed(
         # Fetch RSS feed via RateLimitedClient for resilience
         # This gives us rate limiting, circuit breaker, and metrics
         async with RateLimitedClient(timeout=30.0) as client:
+            # Initialize human browsing session
+            domain = extract_domain(rss_url)
+            human_session = await HumanBrowsingSession.from_config(client, domain)
+
+            # Optional: maybe visit homepage before fetching feed
+            await human_session.maybe_visit_homepage(rss_url)
+
+            # Fetch RSS feed (request_role="direct" by default)
             response = await client.get(rss_url)
             response.raise_for_status()
 
@@ -330,6 +340,14 @@ async def collect_rss_with_etag(
         # Fetch via RateLimitedClient with automatic ETag support
         # The client handles If-None-Match headers automatically
         async with RateLimitedClient(timeout=30.0) as client:
+            # Initialize human browsing session
+            domain = extract_domain(rss_url)
+            human_session = await HumanBrowsingSession.from_config(client, domain)
+
+            # Optional: maybe visit homepage before fetching feed
+            await human_session.maybe_visit_homepage(rss_url)
+
+            # Fetch RSS feed (request_role="direct" by default)
             response = await client.get(rss_url)
 
             # Check if feed was not modified (304)

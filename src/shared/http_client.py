@@ -487,9 +487,36 @@ class RateLimitedClient:
         async with self._domain_semaphores[domain]:
             yield
 
+    async def _track_request(self, domain: str, request_role: str):
+        """
+        Track request by role (direct or simulated).
+
+        Args:
+            domain: Domain name
+            request_role: "direct" for normal requests, "simulated" for human behavior
+        """
+        from shared.metrics import increment_domain_metric
+        if request_role == "simulated":
+            await increment_domain_metric(domain, 'simulated_requests')
+        else:  # "direct" or unknown
+            await increment_domain_metric(domain, 'direct_requests')
+
+    async def _trigger_adaptive_backoff(self, domain: str, status_code: int):
+        """
+        Trigger adaptive backoff on rate limit errors.
+
+        Args:
+            domain: Domain name
+            status_code: HTTP status code (429 or 403 trigger backoff)
+        """
+        from shared.human_behavior import AdaptiveBackoff
+        backoff = AdaptiveBackoff(domain)
+        await backoff.record_error(status_code)
+
     async def get(
         self,
         url: str,
+        request_role: str = "direct",
         **kwargs
     ) -> httpx.Response:
         """
@@ -497,6 +524,7 @@ class RateLimitedClient:
 
         Args:
             url: URL to fetch
+            request_role: "direct" for normal requests, "simulated" for human behavior (default: "direct")
             **kwargs: Additional arguments passed to httpx.AsyncClient.get()
 
         Returns:
@@ -509,6 +537,9 @@ class RateLimitedClient:
         """
         domain = extract_domain(url)
         start_time = time.time()
+
+        # Track request role
+        await self._track_request(domain, request_role)
 
         # Check circuit breaker
         await self._check_circuit_breaker(domain)
@@ -551,6 +582,10 @@ class RateLimitedClient:
 
             # Record metrics
             await self._record_metrics(domain, response.status_code, latency_ms, retry_count)
+
+            # Trigger adaptive backoff on rate limit errors
+            if response.status_code in (429, 403):
+                await self._trigger_adaptive_backoff(domain, response.status_code)
 
             # Record success in domain policy
             if flags['enable_circuit_breaker'] and 200 <= response.status_code < 300:
@@ -670,4 +705,312 @@ class RateLimitedClient:
                     raise
 
         # Should never reach here, but for type safety
+        return response, max_attempts - 1
+
+    async def head(
+        self,
+        url: str,
+        request_role: str = "simulated",
+        **kwargs
+    ) -> httpx.Response:
+        """
+        Perform HEAD request with rate limiting and circuit breaker.
+
+        Args:
+            url: URL to fetch
+            request_role: "direct" for normal requests, "simulated" for human behavior (default: "simulated")
+            **kwargs: Additional arguments passed to httpx.AsyncClient.head()
+
+        Returns:
+            httpx.Response object
+
+        Raises:
+            CircuitBreakerOpen: If circuit breaker is open
+            httpx.HTTPStatusError: On HTTP errors (after retries)
+            httpx.RequestError: On network errors (after retries)
+        """
+        domain = extract_domain(url)
+        start_time = time.time()
+
+        # Track request role
+        await self._track_request(domain, request_role)
+
+        # Check circuit breaker
+        await self._check_circuit_breaker(domain)
+
+        # Wait for rate limit
+        await self._wait_for_rate_limit(domain)
+
+        # Acquire concurrency slot
+        async with self._acquire_concurrency_slot(domain):
+            # Execute request with retry logic
+            response, retry_count = await self._execute_head_with_retry(url, domain, **kwargs)
+
+            # Record latency
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            # Record metrics
+            await self._record_metrics(domain, response.status_code, latency_ms, retry_count)
+
+            # Trigger adaptive backoff on rate limit errors
+            if response.status_code in (429, 403):
+                await self._trigger_adaptive_backoff(domain, response.status_code)
+
+            # Record success in domain policy
+            flags = await self._load_feature_flags()
+            if flags['enable_circuit_breaker'] and 200 <= response.status_code < 300:
+                policy = await self._get_domain_policy(domain)
+                await sync_to_async(policy.record_success)()
+
+            # Log structured data
+            logger.info(
+                "HTTP HEAD request completed",
+                extra={
+                    'domain': domain,
+                    'url': url,
+                    'status_code': response.status_code,
+                    'latency_ms': latency_ms,
+                    'retry_count': retry_count,
+                }
+            )
+
+            return response
+
+    async def post(
+        self,
+        url: str,
+        request_role: str = "direct",
+        **kwargs
+    ) -> httpx.Response:
+        """
+        Perform POST request with rate limiting and circuit breaker.
+
+        Args:
+            url: URL to post to
+            request_role: "direct" for normal requests, "simulated" for human behavior (default: "direct")
+            **kwargs: Additional arguments passed to httpx.AsyncClient.post()
+
+        Returns:
+            httpx.Response object
+
+        Raises:
+            CircuitBreakerOpen: If circuit breaker is open
+            httpx.HTTPStatusError: On HTTP errors (after retries)
+            httpx.RequestError: On network errors (after retries)
+        """
+        domain = extract_domain(url)
+        start_time = time.time()
+
+        # Track request role
+        await self._track_request(domain, request_role)
+
+        # Check circuit breaker
+        await self._check_circuit_breaker(domain)
+
+        # Wait for rate limit
+        await self._wait_for_rate_limit(domain)
+
+        # Acquire concurrency slot
+        async with self._acquire_concurrency_slot(domain):
+            # Execute request with retry logic
+            response, retry_count = await self._execute_post_with_retry(url, domain, **kwargs)
+
+            # Record latency
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            # Record metrics
+            await self._record_metrics(domain, response.status_code, latency_ms, retry_count)
+
+            # Trigger adaptive backoff on rate limit errors
+            if response.status_code in (429, 403):
+                await self._trigger_adaptive_backoff(domain, response.status_code)
+
+            # Record success in domain policy
+            flags = await self._load_feature_flags()
+            if flags['enable_circuit_breaker'] and 200 <= response.status_code < 300:
+                policy = await self._get_domain_policy(domain)
+                await sync_to_async(policy.record_success)()
+
+            # Log structured data
+            logger.info(
+                "HTTP POST request completed",
+                extra={
+                    'domain': domain,
+                    'url': url,
+                    'status_code': response.status_code,
+                    'latency_ms': latency_ms,
+                    'retry_count': retry_count,
+                }
+            )
+
+            return response
+
+    async def _execute_head_with_retry(
+        self,
+        url: str,
+        domain: str,
+        **kwargs
+    ) -> tuple[httpx.Response, int]:
+        """
+        Execute HTTP HEAD request with retry logic.
+
+        Args:
+            url: URL to fetch
+            domain: Domain name
+            **kwargs: Arguments for httpx.AsyncClient.head()
+
+        Returns:
+            Tuple of (response, retry_count)
+
+        Raises:
+            httpx.HTTPStatusError: On unrecoverable HTTP errors
+            httpx.RequestError: On network errors after retries
+        """
+        max_attempts = 3
+        flags = await self._load_feature_flags()
+
+        for attempt in range(max_attempts):
+            try:
+                response = await self._client.head(url, **kwargs)
+
+                # Handle 429 Rate Limit
+                if response.status_code == 429:
+                    if attempt < max_attempts - 1:
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        wait_time = retry_after + jitter(retry_after)
+                        logger.warning(
+                            f"HTTP 429 for {domain}, waiting {wait_time:.0f}s "
+                            f"(attempt {attempt + 1}/{max_attempts})"
+                        )
+                        if flags['enable_circuit_breaker']:
+                            policy = await self._get_domain_policy(domain)
+                            await sync_to_async(policy.record_failure)('rate_limit')
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                # Handle 403 Forbidden
+                elif response.status_code == 403:
+                    logger.error(f"HTTP 403 Forbidden for {domain}")
+                    if flags['enable_circuit_breaker']:
+                        policy = await self._get_domain_policy(domain)
+                        await sync_to_async(policy.record_failure)('forbidden')
+                    return response, attempt
+
+                # Handle 404 Not Found
+                elif response.status_code == 404:
+                    return response, attempt
+
+                # Handle 5xx Server Error
+                elif 500 <= response.status_code < 600:
+                    if attempt < max_attempts - 1:
+                        wait_time = exponential_backoff(attempt)
+                        logger.warning(
+                            f"HTTP {response.status_code} for {domain}, "
+                            f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                return response, attempt
+
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt < max_attempts - 1:
+                    wait_time = exponential_backoff(attempt)
+                    logger.warning(
+                        f"Network error for {domain}: {e}, "
+                        f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    if flags['enable_circuit_breaker']:
+                        policy = await self._get_domain_policy(domain)
+                        await sync_to_async(policy.record_failure)('generic')
+                    raise
+
+        return response, max_attempts - 1
+
+    async def _execute_post_with_retry(
+        self,
+        url: str,
+        domain: str,
+        **kwargs
+    ) -> tuple[httpx.Response, int]:
+        """
+        Execute HTTP POST request with retry logic.
+
+        Args:
+            url: URL to post to
+            domain: Domain name
+            **kwargs: Arguments for httpx.AsyncClient.post()
+
+        Returns:
+            Tuple of (response, retry_count)
+
+        Raises:
+            httpx.HTTPStatusError: On unrecoverable HTTP errors
+            httpx.RequestError: On network errors after retries
+        """
+        max_attempts = 3
+        flags = await self._load_feature_flags()
+
+        for attempt in range(max_attempts):
+            try:
+                response = await self._client.post(url, **kwargs)
+
+                # Handle 429 Rate Limit
+                if response.status_code == 429:
+                    if attempt < max_attempts - 1:
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        wait_time = retry_after + jitter(retry_after)
+                        logger.warning(
+                            f"HTTP 429 for {domain}, waiting {wait_time:.0f}s "
+                            f"(attempt {attempt + 1}/{max_attempts})"
+                        )
+                        if flags['enable_circuit_breaker']:
+                            policy = await self._get_domain_policy(domain)
+                            await sync_to_async(policy.record_failure)('rate_limit')
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                # Handle 403 Forbidden
+                elif response.status_code == 403:
+                    logger.error(f"HTTP 403 Forbidden for {domain}")
+                    if flags['enable_circuit_breaker']:
+                        policy = await self._get_domain_policy(domain)
+                        await sync_to_async(policy.record_failure)('forbidden')
+                    return response, attempt
+
+                # Handle 404 Not Found
+                elif response.status_code == 404:
+                    return response, attempt
+
+                # Handle 5xx Server Error
+                elif 500 <= response.status_code < 600:
+                    if attempt < max_attempts - 1:
+                        wait_time = exponential_backoff(attempt)
+                        logger.warning(
+                            f"HTTP {response.status_code} for {domain}, "
+                            f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+
+                return response, attempt
+
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt < max_attempts - 1:
+                    wait_time = exponential_backoff(attempt)
+                    logger.warning(
+                        f"Network error for {domain}: {e}, "
+                        f"retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    if flags['enable_circuit_breaker']:
+                        policy = await self._get_domain_policy(domain)
+                        await sync_to_async(policy.record_failure)('generic')
+                    raise
+
         return response, max_attempts - 1

@@ -25,6 +25,8 @@ from bs4 import BeautifulSoup
 
 from .adapters import raw_item_to_collected_item
 from shared.http_client import RateLimitedClient
+from shared.human_behavior import HumanBrowsingSession
+from shared.url_utils import extract_domain
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +92,15 @@ async def collect(
             timeout=30.0,
             follow_redirects=True
         ) as client:
-            # Fetch homepage
+            # Initialize human browsing session
+            domain = extract_domain(BASE_URL)
+            human_session = await HumanBrowsingSession.from_config(client, domain)
+
+            # Optional: maybe visit homepage (though we're already fetching it)
+            # This adds human-like behavior before the actual fetch
+            await human_session.maybe_visit_homepage(BASE_URL)
+
+            # Fetch homepage (request_role="direct" by default)
             response = await client.get(BASE_URL, headers=headers)
             response.raise_for_status()
 
@@ -116,6 +126,9 @@ async def collect(
 
                     # Make URL absolute
                     full_url = urljoin(BASE_URL, relative_url)
+
+                    # Optional: prefetch for this article URL
+                    await human_session.optional_prefetch(full_url)
 
                     # Extract publication date from URL
                     published_at = extract_date_from_url(relative_url)

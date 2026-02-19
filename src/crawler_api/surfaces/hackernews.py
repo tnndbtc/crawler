@@ -23,6 +23,8 @@ import httpx
 
 from .collector_interface import CollectedItem
 from shared.http_client import RateLimitedClient
+from shared.human_behavior import HumanBrowsingSession
+from shared.url_utils import extract_domain
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +169,15 @@ async def collect(
 
     # Use RateLimitedClient for resilience
     async with RateLimitedClient(timeout=timeout) as client:
+        # Initialize human browsing session
+        domain = extract_domain(TOP_STORIES_URL)
+        human_session = await HumanBrowsingSession.from_config(client, domain)
+
+        # Optional: maybe visit homepage before fetching
+        await human_session.maybe_visit_homepage(TOP_STORIES_URL)
+
         try:
-            # Step 1: Fetch top story IDs
+            # Step 1: Fetch top story IDs (request_role="direct" by default)
             response = await client.get(TOP_STORIES_URL)
             response.raise_for_status()
             story_ids = response.json()
