@@ -82,6 +82,12 @@ if DATABASE_URL:
     import dj_database_url
     DATABASES['default'] = dj_database_url.parse(DATABASE_URL)
 
+# Test database configuration
+# CRITICAL: Ensures tests use a separate database
+DATABASES['default']['TEST'] = {
+    'NAME': BASE_DIR / 'test_db.sqlite3',
+}
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {

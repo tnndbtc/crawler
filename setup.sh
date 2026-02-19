@@ -433,6 +433,9 @@ start_all_services() {
     start_service "translation_worker" "Translation Worker" \
         "${SCRIPT_DIR}/scripts/run_translation_worker.sh"
 
+    start_service "hotness_worker" "Hotness Worker" \
+        "${SCRIPT_DIR}/scripts/run_hotness_worker.sh"
+
     echo ""
     print_success "All services started!"
     print_info "Use option 5 to check service status"
@@ -445,6 +448,7 @@ stop_all_services() {
 
     # Step 1: Stop tracked services (original behavior)
     print_step "Stopping tracked services..."
+    stop_service "hotness_worker" "Hotness Worker"
     stop_service "translation_worker" "Translation Worker"
     stop_service "surface_worker" "Surface Worker"
     stop_service "api_server" "FastAPI Server"
@@ -454,7 +458,7 @@ stop_all_services() {
     print_step "Checking for untracked worker processes..."
 
     # Find ALL Python worker processes (scripts and actual workers)
-    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
+    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|hotness_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
 
     if [ ! -z "$worker_pids" ]; then
         print_warning "Found untracked worker processes, stopping them..."
@@ -519,6 +523,7 @@ show_service_status() {
         "api_server:FastAPI Server:$API_PORT"
         "surface_worker:Surface Worker:-"
         "translation_worker:Translation Worker:-"
+        "hotness_worker:Hotness Worker:-"
     )
 
     echo -e "${BOLD}Service                    Status      PID       Port${NC}"
@@ -546,6 +551,8 @@ show_service_status() {
                 external_pid=$(ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             elif [ "$service_name" == "surface_worker" ]; then
                 external_pid=$(ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            elif [ "$service_name" == "hotness_worker" ]; then
+                external_pid=$(ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             fi
 
             if [ ! -z "$external_pid" ]; then

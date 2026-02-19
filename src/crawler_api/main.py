@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 import django
 from asgiref.sync import sync_to_async
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 
 # Setup Django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -385,10 +385,18 @@ async def list_trends(
     """
     # Build base queryset
     # LANGUAGE-AWARE: Sort by hotness first, then collected_at
+    # Items WITH hotness appear first (ranked by hotness)
+    # Items WITHOUT hotness appear after (ranked by recency)
     queryset = TrendItem.objects.select_related('region', 'surface').prefetch_related(
         'translations',
         'derivations'  # Join derivations table for selective translation
-    ).order_by('-hotness', '-collected_at', '-id')  # Hotness first, then recency, then ID for stability
+    ).annotate(
+        has_hotness=Case(
+            When(hotness__isnull=False, then=Value(1)),
+            default=Value(0),
+            output_field=IntegerField()
+        )
+    ).order_by('-has_hotness', '-hotness', '-collected_at', '-id')  # has_hotness first, then hotness, then recency, then ID for stability
 
     if region:
         queryset = queryset.filter(region__key=region)

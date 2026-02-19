@@ -1,22 +1,23 @@
 #!/bin/bash
 #
-# Translation Worker Runner
+# Hotness Worker Runner
 #
-# Async translation worker with canonical-first priority.
+# Computes and updates hotness scores for trend items.
 #
 # From REQUIREMENTS-MASTER.md:
-# - Creates en-US translations for non-English items
-# - Processes pending translations using DeepL or OpenAI
+# - Computes hotness scores for new items (hotness=NULL)
+# - Recomputes scores for recent items (<48h old)
+# - Uses time decay and engagement metrics
 # - Never blocks collection (runs separately)
 #
 # Usage:
-#   ./scripts/run_translation_worker.sh
+#   ./scripts/run_hotness_worker.sh
 #
 # Environment variables (from .env):
-#   DEEPL_API_KEY=...                     # DeepL API key (recommended)
-#   OPENAI_API_KEY=...                    # OpenAI API key (fallback)
-#   TRANSLATION_WORKER_POLL_INTERVAL=30   # Seconds between polls
-#   LOG_LEVEL=INFO                        # Logging level
+#   HOTNESS_WORKER_POLL_INTERVAL=300   # Seconds between polls (default: 5 min)
+#   HOTNESS_BATCH_SIZE=100             # Items to process per batch
+#   HOTNESS_BACKFILL_MODE=normal       # 'normal' or 'aggressive'
+#   LOG_LEVEL=INFO                     # Logging level
 #
 
 set -e  # Exit on error
@@ -65,19 +66,13 @@ python -c "import django" 2>/dev/null || {
     exit 1
 }
 
-# Check API keys
-if [ -z "$DEEPL_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
-    echo "Warning: No translation API keys configured"
-    echo "Set DEEPL_API_KEY or OPENAI_API_KEY in .env"
-fi
-
 # Display configuration
 echo "========================================="
-echo "Translation Worker Configuration"
+echo "Hotness Worker Configuration"
 echo "========================================="
-echo "DEEPL_API_KEY: ${DEEPL_API_KEY:+***configured***}"
-echo "OPENAI_API_KEY: ${OPENAI_API_KEY:+***configured***}"
-echo "TRANSLATION_WORKER_POLL_INTERVAL: ${TRANSLATION_WORKER_POLL_INTERVAL:-30}"
+echo "HOTNESS_WORKER_POLL_INTERVAL: ${HOTNESS_WORKER_POLL_INTERVAL:-300}"
+echo "HOTNESS_BATCH_SIZE: ${HOTNESS_BATCH_SIZE:-100}"
+echo "HOTNESS_BACKFILL_MODE: ${HOTNESS_BACKFILL_MODE:-normal}"
 echo "LOG_LEVEL: ${LOG_LEVEL:-INFO}"
 echo "========================================="
 echo ""
@@ -86,6 +81,6 @@ echo ""
 mkdir -p "$PROJECT_ROOT/logs"
 
 # Run worker with logging
-echo "Starting translation worker..."
-echo "Logs: $PROJECT_ROOT/logs/translation_worker.log"
-python src/crawler_api/workers/translation_worker.py 2>&1 | tee -a "$PROJECT_ROOT/logs/translation_worker.log"
+echo "Starting hotness worker..."
+echo "Logs: $PROJECT_ROOT/logs/hotness_worker.log"
+python src/crawler_api/workers/hotness_worker.py 2>&1 | tee -a "$PROJECT_ROOT/logs/hotness_worker.log"
