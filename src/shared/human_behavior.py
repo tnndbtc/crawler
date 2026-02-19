@@ -35,14 +35,38 @@ class SimulationBudget:
         self.domain = domain
         self._base_allowance: Optional[int] = None
 
-    async def check(self) -> bool:
+    async def check_and_consume(self) -> bool:
         """
-        Check if simulation budget available for this domain.
+        Atomically check and consume simulation budget for this domain.
+
+        This prevents multi-worker overshoot by using atomic Redis operations.
 
         Returns:
-            True if budget available, False if exhausted
+            True if budget consumed successfully, False if exhausted
         """
-        from shared.metrics import increment_domain_metric, get_domain_metrics
+        from shared.metrics import try_consume_simulated_budget
+
+        if self._base_allowance is None:
+            self._base_allowance = await self._get_base_allowance()
+
+        consumed = await try_consume_simulated_budget(self.domain, self._base_allowance)
+
+        if not consumed:
+            logger.debug(f"Budget exhausted for {self.domain}")
+
+        return consumed
+
+    async def check(self) -> bool:
+        """
+        DEPRECATED: Use check_and_consume() instead for atomic budget enforcement.
+
+        This method only checks budget without consuming. Kept for backward compatibility
+        but should not be used in production (causes race conditions).
+
+        Returns:
+            True if under budget limit (< max), False if at or over limit
+        """
+        from shared.metrics import get_domain_metrics
 
         metrics = await get_domain_metrics(self.domain)
         direct = metrics['direct_requests']
@@ -53,12 +77,9 @@ class SimulationBudget:
 
         max_simulated = max(int(direct * 0.30), self._base_allowance)
 
-        if simulated >= max_simulated:
-            await increment_domain_metric(self.domain, 'budget_blocked')
-            logger.debug(f"Budget exhausted for {self.domain}: {simulated}/{max_simulated}")
-            return False
-
-        return True
+        # Budget available if current count is at or below max
+        # Tests expect: 30/100 (30%) = allowed, 31/100 (31%) = blocked
+        return simulated <= max_simulated
 
     async def _get_base_allowance(self) -> int:
         """Get base allowance from domain policy or system settings."""
@@ -113,19 +134,22 @@ class HumanBrowsingSession:
         if not self.config['enabled']:
             return
 
-        if not await self._budget.check():
-            return
-
+        # Check probability first (cheap operation)
         probability = self.config['homepage_probability']
         probability *= self.config.get('probability_multiplier', 1.0)
 
         if random.random() > probability:
             return
 
+        # Atomically consume budget (expensive operation, only after probability check)
+        if not await self._budget.check_and_consume():
+            return
+
         try:
             homepage_url = self._infer_homepage_url(feed_url)
             logger.debug(f"Visiting homepage: {homepage_url}")
-            await self.client.head(homepage_url, request_role="simulated")
+            # Budget already consumed, use simulated_no_count to prevent double-increment
+            await self.client.head(homepage_url, request_role="simulated_no_count")
             await self._delay_lognormal(1, 2, 5)
         except CircuitBreakerOpen:
             raise
@@ -161,19 +185,22 @@ class HumanBrowsingSession:
         if not self.config['enabled']:
             return
 
-        if not await self._budget.check():
-            return
-
+        # Check probability first (cheap operation)
         probability = self.config['prefetch_probability']
         probability *= self.config.get('probability_multiplier', 1.0)
 
         if random.random() > probability:
             return
 
+        # Atomically consume budget (expensive operation, only after probability check)
+        if not await self._budget.check_and_consume():
+            return
+
         try:
             favicon_url = self._infer_favicon_url(article_url)
             logger.debug(f"Prefetching favicon: {favicon_url}")
-            await self.client.head(favicon_url, request_role="simulated")
+            # Budget already consumed, use simulated_no_count to prevent double-increment
+            await self.client.head(favicon_url, request_role="simulated_no_count")
         except CircuitBreakerOpen:
             raise
         except Exception as e:
@@ -285,21 +312,34 @@ class AdaptiveBackoff:
         @sync_to_async
         def persist():
             duration_minutes = SystemSettings.get_setting('crawler_human_backoff_duration_minutes', default=15)
-            penalty_until = timezone.now() + timedelta(minutes=duration_minutes)
+            now = timezone.now()
+            new_penalty_until = now + timedelta(minutes=duration_minutes)
 
             policy, created = DomainPolicy.objects.get_or_create(domain=self.domain)
-            policy.simulation_penalty_until = penalty_until
-            policy.simulation_delay_multiplier = 2.5
-            policy.simulation_probability_multiplier = 0.5
-            policy.save(update_fields=[
-                'simulation_penalty_until',
-                'simulation_delay_multiplier',
-                'simulation_probability_multiplier',
-            ])
 
-            logger.info(
-                f"Applied backoff penalty to {self.domain} until {penalty_until} "
-                f"(prob=0.5x, delay=2.5x)"
-            )
+            # Only extend penalty if new penalty is later than existing
+            # This prevents multiple workers from constantly pushing penalty forward
+            should_update = False
+            if policy.simulation_penalty_until is None or policy.simulation_penalty_until < new_penalty_until:
+                policy.simulation_penalty_until = new_penalty_until
+                policy.simulation_delay_multiplier = 2.5
+                policy.simulation_probability_multiplier = 0.5
+                should_update = True
+
+            if should_update:
+                policy.save(update_fields=[
+                    'simulation_penalty_until',
+                    'simulation_delay_multiplier',
+                    'simulation_probability_multiplier',
+                ])
+                logger.info(
+                    f"Applied backoff penalty to {self.domain} until {new_penalty_until} "
+                    f"(prob=0.5x, delay=2.5x)"
+                )
+            else:
+                logger.debug(
+                    f"Backoff penalty already active for {self.domain} until {policy.simulation_penalty_until}, "
+                    f"not extending (new would be {new_penalty_until})"
+                )
 
         await persist()

@@ -493,11 +493,17 @@ class RateLimitedClient:
 
         Args:
             domain: Domain name
-            request_role: "direct" for normal requests, "simulated" for human behavior
+            request_role: "direct", "simulated", or "simulated_no_count"
+                - "direct": normal crawler request (increments direct_requests)
+                - "simulated": human behavior request (increments simulated_requests)
+                - "simulated_no_count": budget already consumed, don't double-count
         """
         from shared.metrics import increment_domain_metric
         if request_role == "simulated":
             await increment_domain_metric(domain, 'simulated_requests')
+        elif request_role == "simulated_no_count":
+            # Budget already consumed atomically, no tracking needed
+            pass
         else:  # "direct" or unknown
             await increment_domain_metric(domain, 'direct_requests')
 
