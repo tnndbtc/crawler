@@ -298,7 +298,8 @@ def locale_to_lang_group(locale: str) -> str:
 def classify_item_language(
     title: str,
     description: Optional[str],
-    region_default_locale: str
+    region_default_locale: str,
+    collector_locale: Optional[str] = None
 ) -> Tuple[str, str, str]:
     """
     Classify item language into (base_lang, locale, lang_group).
@@ -309,6 +310,9 @@ def classify_item_language(
         title: Item title (required)
         description: Item description (optional, improves accuracy)
         region_default_locale: Default locale from the region (e.g., 'ja-JP' for Japan region)
+        collector_locale: Locale provided by the collector (e.g., 'zh-Hans' from wenxuecity).
+            When provided, this is trusted over langdetect for CJK languages where
+            langdetect is known to be unreliable on short text.
 
     Returns:
         Tuple of (base_lang, locale, lang_group)
@@ -332,30 +336,53 @@ def classify_item_language(
         ('en', 'en-US', 'en')
 
     Strategy:
-        1. Detect base language from text (title + description)
-        2. If detected base_lang matches region, use region's full locale
-        3. Otherwise, map detected base_lang to default locale
-        4. Compute lang_group from locale
+        1. If collector provides a locale, use it as the primary source of truth
+           (collectors know their source language — e.g., wenxuecity is always Chinese)
+        2. Run langdetect on text as a secondary signal
+        3. If langdetect agrees with collector, use langdetect result
+        4. If langdetect disagrees, trust the collector (langdetect is unreliable for CJK short text)
+        5. If no collector locale, fall back to langdetect + region defaults
     """
     # Combine title and description for better detection accuracy
     combined_text = title
     if description:
         combined_text = f"{title} {description}"
 
-    # Detect base language
-    # Use region's base language as fallback (e.g., 'ja' from 'ja-JP')
+    # Detect base language from text
     region_base_lang = region_default_locale.split('-')[0].lower()
     detected_base_lang = detect_language(combined_text, fallback=region_base_lang)
 
+    # Normalize langdetect output: 'zh-cn'/'zh-tw' → 'zh'
+    if detected_base_lang.startswith('zh'):
+        detected_base_lang = 'zh'
+
+    # If collector provided a locale, use it as the source of truth
+    if collector_locale:
+        collector_base_lang = collector_locale.split('-')[0].lower()
+        # Normalize zh-Hans/zh-Hant/zh-CN etc. to 'zh'
+        if collector_base_lang == 'zh':
+            collector_base_lang = 'zh'
+
+        collector_lang_group = locale_to_lang_group(collector_locale)
+        detected_lang_group = locale_to_lang_group(
+            BASE_LANG_TO_DEFAULT_LOCALE.get(detected_base_lang, detected_base_lang)
+        )
+
+        if collector_lang_group != detected_lang_group:
+            logger.info(
+                f"Language override: langdetect={detected_base_lang} → "
+                f"collector={collector_base_lang} (from {collector_locale}) | "
+                f"title: {title[:50]}..."
+            )
+            detected_base_lang = collector_base_lang
+
     # Determine locale
-    # If detected language matches region, use region's full locale
-    # Otherwise, use default locale for detected language
     if detected_base_lang == region_base_lang:
         locale = normalize_locale(region_default_locale)
     else:
         locale = BASE_LANG_TO_DEFAULT_LOCALE.get(
             detected_base_lang,
-            f"{detected_base_lang}-{detected_base_lang.upper()}"  # Fallback: en → en-EN
+            f"{detected_base_lang}-{detected_base_lang.upper()}"
         )
 
     # Compute language group

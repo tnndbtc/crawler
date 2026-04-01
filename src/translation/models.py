@@ -3,7 +3,7 @@ Django models for translation engine configuration.
 
 Models:
 - TranslationConfig: Global translation settings (singleton) with embedded prompts
-- LLMModelConfig: LLM model configurations for OpenAI engine
+- LLMModelConfig: LLM model configurations (legacy, kept for backward compatibility)
 - ProviderHealth: Track health status of translation providers
 """
 
@@ -23,37 +23,36 @@ class TranslationConfig(models.Model):
     """
 
     ENGINE_CHOICES = [
-        ('deepl', 'DeepL'),
-        ('openai', 'OpenAI'),
+        ('claude', 'Claude CLI'),
     ]
 
     # Engine selection
     canonical_engine = models.CharField(
         max_length=20,
         choices=ENGINE_CHOICES,
-        default='deepl',
+        default='claude',
         help_text="Engine for canonical (en-US) translations used in ranking/analysis"
     )
     display_engine = models.CharField(
         max_length=20,
         choices=ENGINE_CHOICES,
-        default='deepl',
+        default='claude',
         help_text="Engine for display translations (human-readable UI)"
     )
     fallback_order = models.JSONField(
         default=list,
         blank=True,
-        help_text="Ordered list of fallback engines: ['deepl', 'openai']"
+        help_text="Ordered list of fallback engines: ['claude']"
     )
 
-    # LLM Model selection (only used when engine is OpenAI)
+    # LLM Model selection (kept for backward compatibility)
     canonical_model = models.ForeignKey(
         'LLMModelConfig',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='canonical_configs',
-        help_text="LLM model to use for canonical translations (when OpenAI is selected)"
+        help_text="LLM model config (not used by Claude CLI engine)"
     )
     display_model = models.ForeignKey(
         'LLMModelConfig',
@@ -61,7 +60,7 @@ class TranslationConfig(models.Model):
         null=True,
         blank=True,
         related_name='display_configs',
-        help_text="LLM model to use for display translations (when OpenAI is selected)"
+        help_text="LLM model config (not used by Claude CLI engine)"
     )
 
     # Feature flags
@@ -120,7 +119,7 @@ class TranslationConfig(models.Model):
 
         # Set default fallback order if empty
         if not self.fallback_order:
-            self.fallback_order = ['deepl', 'openai']
+            self.fallback_order = ['claude']
 
         super().save(*args, **kwargs)
 
@@ -134,7 +133,7 @@ class TranslationConfig(models.Model):
         obj, created = cls.objects.get_or_create(pk=1)
         if created:
             # Set default fallback order
-            obj.fallback_order = ['deepl', 'openai']
+            obj.fallback_order = ['claude']
             obj.enabled_locales = ['zh-Hans']
             obj.save()
         return obj
@@ -206,10 +205,10 @@ class TranslationConfig(models.Model):
 
 class LLMModelConfig(models.Model):
     """
-    LLM model configuration for OpenAI engine.
+    LLM model configuration (legacy, kept for backward compatibility).
 
-    Each entry is self-contained with model parameters AND prompts.
-    Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display").
+    Previously used for OpenAI engine prompt management.
+    Not used by the Claude CLI engine.
     """
 
     PROVIDER_CHOICES = [
@@ -362,8 +361,7 @@ class ProviderHealth(models.Model):
     """
 
     PROVIDER_CHOICES = [
-        ('deepl', 'DeepL'),
-        ('openai', 'OpenAI'),
+        ('claude', 'Claude CLI'),
     ]
 
     STATE_CHOICES = [

@@ -157,9 +157,7 @@ LOGGING = {
     },
 }
 
-# Translation API Keys
-DEEPL_API_KEY = os.getenv('DEEPL_API_KEY')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# Translation: uses Claude CLI (claude -p), no API keys needed
 
 # Worker settings
 DRY_RUN = os.getenv('DRY_RUN', 'false').lower() == 'true'

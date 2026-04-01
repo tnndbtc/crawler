@@ -122,7 +122,7 @@ class TranslationManager:
         Get or create engine instance.
 
         Args:
-            engine_name: Engine name (e.g., 'deepl', 'openai', 'local')
+            engine_name: Engine name (e.g., 'claude')
 
         Returns:
             Engine instance

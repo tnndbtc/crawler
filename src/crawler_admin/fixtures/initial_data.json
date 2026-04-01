@@ -1,17 +1,5 @@
 [
   {
-    "model": "crawler_admin.translationsettings",
-    "pk": 1,
-    "fields": {
-      "translation_enabled": true,
-      "default_provider": "deepl",
-      "canonical_locale_for_analysis": "en-US",
-      "force_canonical_translation": true,
-      "enabled_locales": [],
-      "max_chars_per_request": 5000
-    }
-  },
-  {
     "model": "crawler_admin.region",
     "pk": 1,
     "fields": {

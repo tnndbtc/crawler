@@ -19,6 +19,7 @@ import pytest
 # Setup Django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+os.environ['DJANGO_ALLOW_ASYNC_UNSAFE'] = 'true'  # Allow sync ORM in async tests
 
 import django
 django.setup()
@@ -122,19 +123,25 @@ class TestGetDomainMetrics:
     @pytest.mark.asyncio
     async def test_get_metrics_parses_redis_values(self):
         """Test that get_metrics parses Redis values correctly."""
-        with patch('shared.metrics.get_redis_client') as mock_get_redis:
-            mock_redis = AsyncMock()
-            pipeline = AsyncMock()
-            pipeline.execute.return_value = ['10', '3', '1', '2']
-            mock_redis.pipeline.return_value.__aenter__.return_value = pipeline
-            mock_get_redis.return_value = mock_redis
+        import shared.metrics as metrics_module
+        old_client = metrics_module._redis_client
+        metrics_module._redis_client = None
+        try:
+            with patch('shared.metrics.get_redis_client') as mock_get_redis:
+                mock_redis = MagicMock()
+                pipeline = MagicMock()
+                pipeline.execute = AsyncMock(return_value=['10', '3', '1', '2'])
+                mock_redis.pipeline.return_value = pipeline
+                mock_get_redis.return_value = mock_redis
 
-            metrics = await get_domain_metrics('example.com')
+                metrics = await get_domain_metrics('example.com')
 
-            assert metrics['direct_requests'] == 10
-            assert metrics['simulated_requests'] == 3
-            assert metrics['fallbacks'] == 1
-            assert metrics['budget_blocked'] == 2
+                assert metrics['direct_requests'] == 10
+                assert metrics['simulated_requests'] == 3
+                assert metrics['fallbacks'] == 1
+                assert metrics['budget_blocked'] == 2
+        finally:
+            metrics_module._redis_client = old_client
 
     @pytest.mark.asyncio
     async def test_get_metrics_falls_back_to_db_on_redis_error(self):
@@ -207,13 +214,19 @@ class TestFlushRedisToDb:
         with patch('shared.metrics.get_redis_client') as mock_get_redis:
             mock_redis = AsyncMock()
             mock_redis.set.return_value = True
-            mock_redis.get.side_effect = ['10', '3', '1', '2']
-            mock_redis.scan_iter.return_value = [
-                'crawler:metrics:example.com:2026-02-18-15:direct_requests',
-                'crawler:metrics:example.com:2026-02-18-15:simulated_requests',
-                'crawler:metrics:example.com:2026-02-18-15:fallbacks',
-                'crawler:metrics:example.com:2026-02-18-15:budget_blocked',
-            ]
+            mock_redis.eval.side_effect = ['10', '3', '1', '2']
+
+            async def mock_scan_iter(match=None):
+                keys = [
+                    'crawler:metrics:example.com:2026-02-18-15:direct_requests',
+                    'crawler:metrics:example.com:2026-02-18-15:simulated_requests',
+                    'crawler:metrics:example.com:2026-02-18-15:fallbacks',
+                    'crawler:metrics:example.com:2026-02-18-15:budget_blocked',
+                ]
+                for key in keys:
+                    yield key
+
+            mock_redis.scan_iter = mock_scan_iter
             mock_get_redis.return_value = mock_redis
 
             await flush_redis_to_db()
@@ -230,17 +243,23 @@ class TestFlushRedisToDb:
         with patch('shared.metrics.get_redis_client') as mock_get_redis:
             mock_redis = AsyncMock()
             mock_redis.set.return_value = True
-            mock_redis.get.side_effect = ['10', '3']
-            mock_redis.scan_iter.return_value = [
-                'crawler:metrics:example.com:2026-02-18-15:direct_requests',
-                'crawler:metrics:example.com:2026-02-18-15:simulated_requests',
-            ]
+            mock_redis.eval.side_effect = ['10', '3']
+
+            async def mock_scan_iter(match=None):
+                keys = [
+                    'crawler:metrics:example.com:2026-02-18-15:direct_requests',
+                    'crawler:metrics:example.com:2026-02-18-15:simulated_requests',
+                ]
+                for key in keys:
+                    yield key
+
+            mock_redis.scan_iter = mock_scan_iter
             mock_get_redis.return_value = mock_redis
 
             await flush_redis_to_db()
 
-            # Verify delete was called
-            mock_redis.delete.assert_called_once()
+            # Verify lock was released (delete called for lock key)
+            mock_redis.delete.assert_called()
 
     @pytest.mark.asyncio
     async def test_flush_releases_lock_on_error(self):

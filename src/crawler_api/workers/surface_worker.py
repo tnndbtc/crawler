@@ -135,10 +135,12 @@ async def execute_surface(surface: TrendSurface) -> None:
             # Store (unless DRY_RUN from /tmp/t8)
             if not DRY_RUN:
                 # Language detection and classification
+                # Pass collector's locale as hint — collectors know their source language
                 base_lang, locale, lang_group = classify_item_language(
                     title=item_dict['title'],
                     description=item_dict.get('description'),
-                    region_default_locale=surface.region.default_locale
+                    region_default_locale=surface.region.default_locale,
+                    collector_locale=item_dict.get('locale'),
                 )
 
                 # Create item

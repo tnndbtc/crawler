@@ -77,11 +77,12 @@ ensure_directories() {
     mkdir -p "$PID_DIR" "$LOG_DIR" "$BACKUP_DIR"
 }
 
-# Check if a service is running
+# Check if a service is running (PID file first, then actual process check)
 is_service_running() {
     local service_name="$1"
     local pid_file="${PID_DIR}/${service_name}.pid"
 
+    # Check PID file first
     if [ -f "$pid_file" ]; then
         local pid=$(cat "$pid_file")
         if ps -p "$pid" > /dev/null 2>&1; then
@@ -89,9 +90,33 @@ is_service_running() {
         else
             # Stale PID file
             rm -f "$pid_file"
-            return 1  # Not running
         fi
     fi
+
+    # Fallback: check actual process regardless of PID file
+    local process_pid=""
+    case "$service_name" in
+        django_admin)
+            process_pid=$(ps aux | grep "manage.py runserver" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
+        api_server)
+            process_pid=$(ps aux | grep "uvicorn.*crawler_api" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
+        translation_worker)
+            process_pid=$(ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
+        surface_worker)
+            process_pid=$(ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
+        hotness_worker)
+            process_pid=$(ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
+    esac
+
+    if [ ! -z "$process_pid" ]; then
+        return 0  # Running
+    fi
+
     return 1  # Not running
 }
 
@@ -104,16 +129,41 @@ is_port_in_use() {
     return 1  # Port free
 }
 
-# Get PID for a service
+# Get PID for a service (PID file first, then actual process)
 get_service_pid() {
     local service_name="$1"
     local pid_file="${PID_DIR}/${service_name}.pid"
 
+    # Check PID file first
     if [ -f "$pid_file" ]; then
-        cat "$pid_file"
-    else
-        echo ""
+        local pid=$(cat "$pid_file")
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo "$pid"
+            return
+        fi
     fi
+
+    # Fallback: find actual process
+    case "$service_name" in
+        django_admin)
+            ps aux | grep "manage.py runserver" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        api_server)
+            ps aux | grep "uvicorn.*crawler_api" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        translation_worker)
+            ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        surface_worker)
+            ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        hotness_worker)
+            ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
 }
 
 ################################################################################
@@ -263,20 +313,76 @@ first_time_setup() {
     python3 manage.py migrate
     print_success "Database migrations complete"
 
-    # Step 4: Load initial data
-    print_step "Step 4/6: Loading initial data (regions & surfaces)..."
+    # Step 4: Load initial data and seed all collectors
+    print_step "Step 4/6: Loading initial data & seeding all collectors..."
     if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
         python3 manage.py loaddata initial_data
-        print_success "Initial data loaded"
+        print_success "Base data loaded (regions & core surfaces)"
     else
         print_warning "initial_data.json not found (skipping)"
     fi
 
-    # Step 5: Create superuser
-    print_step "Step 5/6: Creating Django admin superuser..."
-    print_info "You'll be prompted to create an admin account"
-    python3 manage.py createsuperuser
-    print_success "Superuser created"
+    # Seed migrated collectors (bbc, reuters, ap, guardian, aljazeera, etc.)
+    print_info "Seeding migrated collectors..."
+    python3 manage.py setup_migrated_collectors 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "Migrated collectors seeded"
+
+    # Seed generic RSS sources (techcrunch, arstechnica, theverge)
+    print_info "Seeding RSS sources..."
+    python3 manage.py setup_rss_sources 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "RSS sources seeded"
+
+    # Seed translation system settings
+    print_info "Seeding translation settings..."
+    python3 manage.py shell << 'SETTINGS_EOF'
+from crawler_admin.models import SystemSettings
+from translation.models import TranslationConfig
+
+# Seed SystemSettings
+settings = {
+    'translation_hot_percent': (10, 'integer', 'Top X% hottest items to translate per language group'),
+    'translation_small_bucket_min': (1, 'integer', 'Minimum items to translate for small buckets'),
+    'translation_small_bucket_max': (5, 'integer', 'Maximum items to translate for small buckets'),
+    'translation_target_locales': (['en', 'zh-Hans'], 'json', 'Target locales for display translation'),
+    'translation_source_langs': ([], 'json', 'Source languages (empty=ALL)'),
+}
+
+for key, (value, vtype, desc) in settings.items():
+    obj, created = SystemSettings.objects.get_or_create(
+        key=key,
+        defaults={'value_json': value, 'value_type': vtype, 'description': desc, 'updated_by': 'setup'}
+    )
+    status = 'Created' if created else 'Already exists'
+    print(f'  {status}: {key} = {value}')
+
+# Fix TranslationConfig enabled_locales to match target_locales
+config = TranslationConfig.get_config()
+if config.enabled_locales != ['en', 'zh-Hans']:
+    config.enabled_locales = ['en', 'zh-Hans']
+    config.canonical_engine = 'claude'
+    config.display_engine = 'claude'
+    config.fallback_order = ['claude']
+    config.save()
+    print('  Updated: TranslationConfig.enabled_locales = [en, zh-Hans]')
+else:
+    print('  Already correct: TranslationConfig.enabled_locales')
+SETTINGS_EOF
+    print_success "Translation settings seeded"
+
+    # Step 5: Create superuser (skip if one already exists)
+    print_step "Step 5/6: Checking Django admin superuser..."
+    local has_superuser=$(python3 manage.py shell -c "
+from django.contrib.auth.models import User
+print('yes' if User.objects.filter(is_superuser=True).exists() else 'no')
+" 2>&1 | grep -E "^(yes|no)$")
+
+    if [ "$has_superuser" = "yes" ]; then
+        print_success "Superuser already exists (skipping)"
+    else
+        print_info "You'll be prompted to create an admin account"
+        python3 manage.py createsuperuser
+        print_success "Superuser created"
+    fi
 
     # Step 6: Verify setup
     print_step "Step 6/6: Verifying setup..."
@@ -346,18 +452,57 @@ stop_service() {
 
     if ! is_service_running "$service_name"; then
         print_info "$service_description is not running"
+        rm -f "$pid_file"
         return 0
     fi
 
-    local pid=$(get_service_pid "$service_name")
-    print_step "Stopping $service_description (PID: $pid)..."
+    # Find ALL pids for this service (python worker, bash wrapper, tee)
+    local all_pids=""
+    case "$service_name" in
+        django_admin)
+            all_pids=$(ps aux | grep "manage.py runserver" | grep -v grep | awk '{print $2}')
+            ;;
+        api_server)
+            all_pids=$(ps aux | grep "uvicorn.*crawler_api" | grep -v grep | awk '{print $2}')
+            ;;
+        translation_worker)
+            all_pids=$(ps aux | grep -E "translation_worker\.(py|sh)|tee.*translation_worker" | grep -v grep | awk '{print $2}')
+            ;;
+        surface_worker)
+            all_pids=$(ps aux | grep -E "surface_worker\.(py|sh)|tee.*surface_worker" | grep -v grep | awk '{print $2}')
+            ;;
+        hotness_worker)
+            all_pids=$(ps aux | grep -E "hotness_worker\.(py|sh)|tee.*hotness_worker" | grep -v grep | awk '{print $2}')
+            ;;
+    esac
+
+    # Also include PID file pid
+    if [ -f "$pid_file" ]; then
+        local file_pid=$(cat "$pid_file")
+        all_pids="$file_pid $all_pids"
+    fi
+
+    # Deduplicate
+    all_pids=$(echo "$all_pids" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+    print_step "Stopping $service_description (PIDs: $all_pids)..."
 
     # Try graceful shutdown first
-    kill $pid 2>/dev/null || true
+    for pid in $all_pids; do
+        kill $pid 2>/dev/null || true
+    done
 
     # Wait up to 10 seconds for graceful shutdown
+    local still_running=false
     for i in {1..10}; do
-        if ! ps -p $pid > /dev/null 2>&1; then
+        still_running=false
+        for pid in $all_pids; do
+            if ps -p $pid > /dev/null 2>&1; then
+                still_running=true
+                break
+            fi
+        done
+        if [ "$still_running" = false ]; then
             rm -f "$pid_file"
             print_success "$service_description stopped"
             return 0
@@ -367,7 +512,9 @@ stop_service() {
 
     # Force kill if still running
     print_warning "Forcing shutdown..."
-    kill -9 $pid 2>/dev/null || true
+    for pid in $all_pids; do
+        kill -9 $pid 2>/dev/null || true
+    done
     rm -f "$pid_file"
     print_success "$service_description stopped (forced)"
 }
@@ -534,7 +681,6 @@ show_service_status() {
 
         printf "%-26s " "$service_desc"
 
-        # Check if tracked by setup.sh first
         if is_service_running "$service_name"; then
             local pid=$(get_service_pid "$service_name")
             printf "${GREEN}%-11s${NC} " "Running"
@@ -545,25 +691,9 @@ show_service_status() {
                 printf "%s\n" "N/A"
             fi
         else
-            # Check if process is running externally (not tracked by setup.sh)
-            local external_pid=""
-            if [ "$service_name" == "translation_worker" ]; then
-                external_pid=$(ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            elif [ "$service_name" == "surface_worker" ]; then
-                external_pid=$(ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            elif [ "$service_name" == "hotness_worker" ]; then
-                external_pid=$(ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            fi
-
-            if [ ! -z "$external_pid" ]; then
-                printf "${GREEN}%-11s${NC} " "Running"
-                printf "${YELLOW}%-9s${NC} " "$external_pid"
-                printf "${YELLOW}%s${NC}\n" "(external)"
-            else
-                printf "${RED}%-11s${NC} " "Stopped"
-                printf "%-9s " "-"
-                printf "%s\n" "-"
-            fi
+            printf "${RED}%-11s${NC} " "Stopped"
+            printf "%-9s " "-"
+            printf "%s\n" "-"
         fi
     done
 
@@ -990,14 +1120,25 @@ run_migrations() {
         return 1
     fi
 
-    print_info "This will apply any pending database migrations"
-    print_info "Migrations update the database schema without losing data"
+    print_info "This will detect model changes, generate migrations, and apply them"
     echo ""
 
-    # Show pending migrations
-    print_step "Checking for pending migrations..."
     cd "$SCRIPT_DIR"
 
+    # Step 1: Generate any new migration files from model changes
+    print_step "Step 1: Detecting model changes and generating migrations..."
+    local makemig_output=$(python3 manage.py makemigrations 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError")
+    echo "$makemig_output"
+
+    if echo "$makemig_output" | grep -q "No changes detected"; then
+        print_success "No new model changes detected"
+    else
+        print_success "Migration files generated"
+    fi
+    echo ""
+
+    # Step 2: Check for pending migrations (unapplied)
+    print_step "Step 2: Checking for pending migrations..."
     local pending_output=$(python3 manage.py showmigrations --plan 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError" | grep "\[ \]")
 
     if [ -z "$pending_output" ]; then
@@ -1008,14 +1149,12 @@ run_migrations() {
         echo "$pending_output"
         echo ""
 
-        confirm_action "Apply these migrations?" || return 1
-
         # Stop services for safety
-        print_step "Stopping services..."
+        print_step "Stopping services before applying migrations..."
         stop_all_services
 
-        # Run migrations
-        print_step "Running migrations..."
+        # Apply migrations
+        print_step "Step 3: Applying migrations..."
         python3 manage.py migrate
 
         if [ $? -ne 0 ]; then
@@ -1025,106 +1164,6 @@ run_migrations() {
         print_success "Migrations applied successfully"
     fi
 
-    # Seed default LLM models if they don't exist (always runs)
-    print_step "Seeding default LLM models..."
-    python3 manage.py shell << 'SEED_EOF'
-from translation.models import LLMModelConfig, TranslationConfig
-
-# Default prompts
-CANONICAL_SYSTEM = (
-    "You are a semantic normalization engine. Your task is NOT to produce natural English. "
-    "Produce stable, literal, machine-consistent English meaning. Remove jokes, sarcasm, slang, exaggeration. "
-    "Rewrite ambiguity into explicit meaning. Prefer neutral factual wording. Do not add commentary. "
-    "Return only the normalized sentence(s)."
-)
-CANONICAL_DEVELOPER = (
-    "Normalize the following content into canonical English meaning for clustering and ranking. "
-    "Keep topic/subject/object/intent. Remove clickbait, humor, emotional tone. "
-    "Output must be short and consistent."
-)
-CANONICAL_USER = (
-    "Source: {source_platform}\n"
-    "Locale: {original_language}\n"
-    "Title: {title}\n"
-    "Description: {description}"
-)
-
-DISPLAY_SYSTEM = (
-    "You are a professional multilingual news translator. "
-    "Translate naturally for native readers. Keep original meaning and tone. "
-    "Preserve proper nouns. Do not summarize. Do not explain. Return only the translation."
-)
-DISPLAY_DEVELOPER = (
-    "Translate into {target_locale} for user display. Natural wording. Preserve tone. "
-    "Keep names/brands/places accurate. Avoid overly literal phrasing."
-)
-DISPLAY_USER = (
-    "Source: {source_platform}\n"
-    "From: {original_language}\n"
-    "To: {target_locale}\n"
-    "Title: {title}\n"
-    "Description: {description}"
-)
-
-# Create canonical model
-canonical_model, created = LLMModelConfig.objects.get_or_create(
-    name='GPT-4o-mini Canonical',
-    defaults={
-        'provider': 'openai',
-        'model_id': 'gpt-4o-mini',
-        'temperature': 0.3,
-        'top_p': 1.0,
-        'max_tokens': 1000,
-        'system_prompt': CANONICAL_SYSTEM,
-        'developer_prompt': CANONICAL_DEVELOPER,
-        'user_prompt': CANONICAL_USER,
-        'enabled': True,
-        'is_default': False,
-    }
-)
-if created:
-    print(f"Created: {canonical_model.name}")
-else:
-    print(f"Already exists: {canonical_model.name}")
-
-# Create display model
-display_model, created = LLMModelConfig.objects.get_or_create(
-    name='GPT-4o-mini Display',
-    defaults={
-        'provider': 'openai',
-        'model_id': 'gpt-4o-mini',
-        'temperature': 0.3,
-        'top_p': 1.0,
-        'max_tokens': 1000,
-        'system_prompt': DISPLAY_SYSTEM,
-        'developer_prompt': DISPLAY_DEVELOPER,
-        'user_prompt': DISPLAY_USER,
-        'enabled': True,
-        'is_default': False,
-    }
-)
-if created:
-    print(f"Created: {display_model.name}")
-else:
-    print(f"Already exists: {display_model.name}")
-
-# Link TranslationConfig to these models
-config = TranslationConfig.get_config()
-updated = False
-if not config.canonical_model:
-    config.canonical_model = canonical_model
-    updated = True
-if not config.display_model:
-    config.display_model = display_model
-    updated = True
-if updated:
-    config.save()
-    print("Linked TranslationConfig to LLM models")
-else:
-    print("TranslationConfig already has LLM models linked")
-SEED_EOF
-
-    print_success "LLM models seeded"
     echo ""
 }
 
@@ -1177,12 +1216,55 @@ reset_database() {
     python3 manage.py migrate
     print_success "Database recreated"
 
-    # Load initial data
-    print_step "Loading initial data..."
+    # Load initial data and seed all collectors
+    print_step "Loading initial data & seeding all collectors..."
     if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
         python3 manage.py loaddata initial_data
-        print_success "Initial data loaded"
+        print_success "Base data loaded (regions & core surfaces)"
     fi
+
+    python3 manage.py setup_migrated_collectors 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "Migrated collectors seeded"
+
+    python3 manage.py setup_rss_sources 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "RSS sources seeded"
+
+    # Seed translation settings
+    print_info "Seeding translation settings..."
+    python3 manage.py shell << 'SETTINGS_EOF'
+from crawler_admin.models import SystemSettings
+from translation.models import TranslationConfig
+
+# Seed SystemSettings
+settings = {
+    'translation_hot_percent': (10, 'integer', 'Top X% hottest items to translate per language group'),
+    'translation_small_bucket_min': (1, 'integer', 'Minimum items to translate for small buckets'),
+    'translation_small_bucket_max': (5, 'integer', 'Maximum items to translate for small buckets'),
+    'translation_target_locales': (['en', 'zh-Hans'], 'json', 'Target locales for display translation'),
+    'translation_source_langs': ([], 'json', 'Source languages (empty=ALL)'),
+}
+
+for key, (value, vtype, desc) in settings.items():
+    obj, created = SystemSettings.objects.get_or_create(
+        key=key,
+        defaults={'value_json': value, 'value_type': vtype, 'description': desc, 'updated_by': 'setup'}
+    )
+    status = 'Created' if created else 'Already exists'
+    print(f'  {status}: {key} = {value}')
+
+# Fix TranslationConfig enabled_locales to match target_locales
+config = TranslationConfig.get_config()
+if config.enabled_locales != ['en', 'zh-Hans']:
+    config.enabled_locales = ['en', 'zh-Hans']
+    config.canonical_engine = 'claude'
+    config.display_engine = 'claude'
+    config.fallback_order = ['claude']
+    config.save()
+    print('  Updated: TranslationConfig.enabled_locales = [en, zh-Hans]')
+else:
+    print('  Already correct: TranslationConfig.enabled_locales')
+SETTINGS_EOF
+    print_success "Translation settings seeded"
 
     # Create superuser
     print_step "Creating admin user..."
@@ -1255,111 +1337,24 @@ run_with_timeout() {
 # Individual Test Functions
 ################################################################################
 
-run_test_workflow() {
-    print_header "Test Workflow (DRY_RUN mode)"
+run_unit_tests() {
+    print_header "Unit Tests (pytest)"
     local timeout_seconds=120
 
-    if [ ! -f "${SCRIPT_DIR}/scripts/test_workflow.sh" ]; then
-        print_error "Test script not found: scripts/test_workflow.sh"
-        return 1
-    fi
-
-    print_info "Running test workflow with ${timeout_seconds}s timeout..."
-    echo ""
-
-    if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_workflow.sh" $timeout_seconds; then
-        echo ""
-        print_success "✅ Test Workflow: PASSED"
-    else
-        local exit_code=$?
-        echo ""
-        if [ $exit_code -eq 124 ]; then
-            print_warning "⏱️  Test Workflow: TIMEOUT (exceeded ${timeout_seconds}s)"
-        else
-            print_error "❌ Test Workflow: FAILED"
-        fi
-        return 1
-    fi
-}
-
-run_validate_feature1() {
-    print_header "Validate Feature 1 (Language-Aware System)"
-    local timeout_seconds=120
-
-    if [ ! -f "${SCRIPT_DIR}/scripts/validate_feature1.sh" ]; then
-        print_error "Test script not found: scripts/validate_feature1.sh"
-        return 1
-    fi
-
-    print_info "Running Feature 1 validation with ${timeout_seconds}s timeout..."
-    echo ""
-
-    if run_with_timeout "bash ${SCRIPT_DIR}/scripts/validate_feature1.sh" $timeout_seconds; then
-        echo ""
-        print_success "✅ Validate Feature 1: PASSED"
-    else
-        local exit_code=$?
-        echo ""
-        if [ $exit_code -eq 124 ]; then
-            print_warning "⏱️  Validate Feature 1: TIMEOUT (exceeded ${timeout_seconds}s)"
-        else
-            print_error "❌ Validate Feature 1: FAILED"
-        fi
-        return 1
-    fi
-}
-
-run_validate_feature1_e2e() {
-    print_header "Validate Feature 1 End-to-End"
-    local timeout_seconds=120
-
-    if [ ! -f "${SCRIPT_DIR}/scripts/validate_feature1_end_to_end.py" ]; then
-        print_error "Test script not found: scripts/validate_feature1_end_to_end.py"
-        return 1
-    fi
-
-    print_info "Running Feature 1 E2E validation with ${timeout_seconds}s timeout..."
+    print_info "Running pytest unit tests with ${timeout_seconds}s timeout..."
     echo ""
 
     cd "$SCRIPT_DIR"
-    if run_with_timeout "python3 scripts/validate_feature1_end_to_end.py" $timeout_seconds; then
+    if run_with_timeout "python -m pytest src/tests/ -v --tb=short" $timeout_seconds; then
         echo ""
-        print_success "✅ Validate Feature 1 E2E: PASSED"
+        print_success "✅ Unit Tests: PASSED"
     else
         local exit_code=$?
         echo ""
         if [ $exit_code -eq 124 ]; then
-            print_warning "⏱️  Validate Feature 1 E2E: TIMEOUT (exceeded ${timeout_seconds}s)"
+            print_warning "⏱️  Unit Tests: TIMEOUT (exceeded ${timeout_seconds}s)"
         else
-            print_error "❌ Validate Feature 1 E2E: FAILED"
-        fi
-        return 1
-    fi
-}
-
-run_validate_language_aware() {
-    print_header "Validate Language-Aware System"
-    local timeout_seconds=120
-
-    if [ ! -f "${SCRIPT_DIR}/scripts/validate_language_aware_system.py" ]; then
-        print_error "Test script not found: scripts/validate_language_aware_system.py"
-        return 1
-    fi
-
-    print_info "Running language-aware system validation with ${timeout_seconds}s timeout..."
-    echo ""
-
-    cd "$SCRIPT_DIR"
-    if run_with_timeout "python3 scripts/validate_language_aware_system.py" $timeout_seconds; then
-        echo ""
-        print_success "✅ Validate Language-Aware System: PASSED"
-    else
-        local exit_code=$?
-        echo ""
-        if [ $exit_code -eq 124 ]; then
-            print_warning "⏱️  Validate Language-Aware System: TIMEOUT (exceeded ${timeout_seconds}s)"
-        else
-            print_error "❌ Validate Language-Aware System: FAILED"
+            print_error "❌ Unit Tests: FAILED"
         fi
         return 1
     fi
@@ -1402,12 +1397,8 @@ run_all_tests() {
 
     echo ""
     print_info "This will run all available test and validation scripts:"
-    echo "  1) Test Workflow (DRY_RUN mode)"
-    echo "  2) Validate Feature 1 (Language-Aware System)"
-    echo "  3) Validate Feature 1 End-to-End"
-    echo "  4) Validate Language-Aware System"
-    echo "  5) Verify Translation Selection Fix (DISABLED - slow on large datasets)"
-    echo "  6) Good Citizen Feature Validation (Rate limiting, Circuit breaker, HTTP caching)"
+    echo "  1) Unit Tests (pytest)"
+    echo "  2) Good Citizen Feature Validation (Rate limiting, Circuit breaker, HTTP caching)"
     echo ""
     print_warning "Each test has a 120-second timeout to prevent hanging"
     echo ""
@@ -1415,109 +1406,25 @@ run_all_tests() {
     local overall_status=0
     local test_results=()
     local timeout_seconds=120
-    local has_warnings=0
 
-    # Test 1: Test Workflow
-    print_step "Test 1/6: Running test workflow (DRY_RUN mode, timeout: ${timeout_seconds}s)..."
-    if [ -f "${SCRIPT_DIR}/scripts/test_workflow.sh" ]; then
-        if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_workflow.sh" $timeout_seconds; then
-            test_results+=("✅ Test Workflow: PASSED")
-        else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                test_results+=("⏱️  Test Workflow: TIMEOUT (exceeded ${timeout_seconds}s)")
-            else
-                test_results+=("❌ Test Workflow: FAILED")
-            fi
-            overall_status=1
-        fi
+    # Test 1: Unit Tests (pytest)
+    print_step "Test 1/2: Running unit tests (pytest, timeout: ${timeout_seconds}s)..."
+    cd "$SCRIPT_DIR"
+    if run_with_timeout "python -m pytest src/tests/ -v --tb=short" $timeout_seconds; then
+        test_results+=("✅ Unit Tests: PASSED")
     else
-        test_results+=("⚠️  Test Workflow: SKIPPED (script not found)")
+        local exit_code=$?
+        if [ $exit_code -eq 124 ]; then
+            test_results+=("⏱️  Unit Tests: TIMEOUT (exceeded ${timeout_seconds}s)")
+        else
+            test_results+=("❌ Unit Tests: FAILED")
+        fi
+        overall_status=1
     fi
     echo ""
 
-    # Test 2: Validate Feature 1
-    print_step "Test 2/6: Running Feature 1 validation (timeout: ${timeout_seconds}s)..."
-    if [ -f "${SCRIPT_DIR}/scripts/validate_feature1.sh" ]; then
-        if run_with_timeout "bash ${SCRIPT_DIR}/scripts/validate_feature1.sh" $timeout_seconds; then
-            test_results+=("✅ Validate Feature 1: PASSED")
-        else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                test_results+=("⏱️  Validate Feature 1: TIMEOUT (exceeded ${timeout_seconds}s)")
-            else
-                test_results+=("❌ Validate Feature 1: FAILED")
-            fi
-            overall_status=1
-        fi
-    else
-        test_results+=("⚠️  Validate Feature 1: SKIPPED (script not found)")
-    fi
-    echo ""
-
-    # Test 3: Validate Feature 1 End-to-End
-    print_step "Test 3/6: Running Feature 1 end-to-end validation (timeout: ${timeout_seconds}s)..."
-    if [ -f "${SCRIPT_DIR}/scripts/validate_feature1_end_to_end.py" ]; then
-        cd "$SCRIPT_DIR"
-        if run_with_timeout "python3 scripts/validate_feature1_end_to_end.py" $timeout_seconds; then
-            test_results+=("✅ Validate Feature 1 E2E: PASSED")
-        else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                test_results+=("⏱️  Validate Feature 1 E2E: TIMEOUT (exceeded ${timeout_seconds}s)")
-            else
-                test_results+=("❌ Validate Feature 1 E2E: FAILED")
-            fi
-            overall_status=1
-        fi
-    else
-        test_results+=("⚠️  Validate Feature 1 E2E: SKIPPED (script not found)")
-    fi
-    echo ""
-
-    # Test 4: Validate Language-Aware System
-    print_step "Test 4/6: Running language-aware system validation (timeout: ${timeout_seconds}s)..."
-    if [ -f "${SCRIPT_DIR}/scripts/validate_language_aware_system.py" ]; then
-        cd "$SCRIPT_DIR"
-        if run_with_timeout "python3 scripts/validate_language_aware_system.py" $timeout_seconds; then
-            test_results+=("✅ Validate Language-Aware System: PASSED")
-        else
-            local exit_code=$?
-            if [ $exit_code -eq 124 ]; then
-                test_results+=("⏱️  Validate Language-Aware System: TIMEOUT (exceeded ${timeout_seconds}s)")
-            else
-                test_results+=("❌ Validate Language-Aware System: FAILED")
-            fi
-            overall_status=1
-        fi
-    else
-        test_results+=("⚠️  Validate Language-Aware System: SKIPPED (script not found)")
-    fi
-    echo ""
-
-    # Test 5: Verify Translation Selection Fix (DISABLED - hangs on large datasets)
-    # print_step "Test 5/5: Verifying translation selection fix (timeout: ${timeout_seconds}s)..."
-    # if [ -f "${SCRIPT_DIR}/verify_translation_selection_fix.py" ]; then
-    #     cd "$SCRIPT_DIR"
-    #     if run_with_timeout "python3 verify_translation_selection_fix.py" $timeout_seconds; then
-    #         test_results+=("✅ Verify Translation Selection Fix: PASSED")
-    #     else
-    #         local exit_code=$?
-    #         if [ $exit_code -eq 124 ]; then
-    #             test_results+=("⏱️  Verify Translation Selection Fix: TIMEOUT (exceeded ${timeout_seconds}s)")
-    #         else
-    #             test_results+=("❌ Verify Translation Selection Fix: FAILED")
-    #         fi
-    #         overall_status=1
-    #     fi
-    # else
-    #     test_results+=("⚠️  Verify Translation Selection Fix: SKIPPED (script not found)")
-    # fi
-    test_results+=("⏭️  Verify Translation Selection Fix: SKIPPED (disabled - slow on large datasets)")
-    echo ""
-
-    # Test 6: Good Citizen Feature Validation
-    print_step "Test 6/6: Running Good Citizen feature validation (timeout: ${timeout_seconds}s)..."
+    # Test 2: Good Citizen Feature Validation
+    print_step "Test 2/2: Running Good Citizen feature validation (timeout: ${timeout_seconds}s)..."
     if [ -f "${SCRIPT_DIR}/scripts/test_good_citizen.sh" ]; then
         if run_with_timeout "bash ${SCRIPT_DIR}/scripts/test_good_citizen.sh" $timeout_seconds; then
             test_results+=("✅ Good Citizen Validation: PASSED")
@@ -1545,22 +1452,10 @@ run_all_tests() {
     done
 
     echo ""
-    if [ $overall_status -eq 0 ] && [ $has_warnings -eq 0 ]; then
+    if [ $overall_status -eq 0 ]; then
         print_success "═══════════════════════════════════════"
         print_success "   ALL TESTS PASSED ✅"
         print_success "═══════════════════════════════════════"
-        print_info "No errors or warnings detected"
-    elif [ $overall_status -eq 0 ] && [ $has_warnings -eq 1 ]; then
-        print_warning "═══════════════════════════════════════"
-        print_warning "   TESTS COMPLETED WITH WARNINGS ⚠️"
-        print_warning "═══════════════════════════════════════"
-        echo ""
-        print_info "Exit code: 0 (warnings are non-blocking in non-strict mode)"
-        print_warning "Review output above for ❌ FAIL or ⚠️ WARN markers"
-        print_info "These warnings indicate:"
-        print_info "  • Selection correctness: More items translated than current quota"
-        print_info "  • Translation coverage: Expected vs actual mismatch"
-        print_info "  • This is normal if quota was changed after translations"
     else
         print_error "═══════════════════════════════════════"
         print_error "   SOME TESTS FAILED ❌"
@@ -1586,11 +1481,8 @@ test_menu() {
         echo "  1)  Run All Tests (complete validation suite)"
         echo ""
         echo -e "${BOLD}Individual Tests:${NC}"
-        echo "  2)  Test Workflow (DRY_RUN mode)"
-        echo "  3)  Validate Feature 1 (Language-Aware System)"
-        echo "  4)  Validate Feature 1 End-to-End"
-        echo "  5)  Validate Language-Aware System"
-        echo "  6)  Good Citizen Feature Validation"
+        echo "  2)  Unit Tests (pytest)"
+        echo "  3)  Good Citizen Feature Validation"
         echo ""
         echo "  0)  Return to Main Menu"
         echo ""
@@ -1606,30 +1498,12 @@ test_menu() {
                 read
                 ;;
             2)
-                run_test_workflow
+                run_unit_tests
                 echo ""
                 print_info "Press Enter to continue..."
                 read
                 ;;
             3)
-                run_validate_feature1
-                echo ""
-                print_info "Press Enter to continue..."
-                read
-                ;;
-            4)
-                run_validate_feature1_e2e
-                echo ""
-                print_info "Press Enter to continue..."
-                read
-                ;;
-            5)
-                run_validate_language_aware
-                echo ""
-                print_info "Press Enter to continue..."
-                read
-                ;;
-            6)
                 run_good_citizen_validation
                 echo ""
                 print_info "Press Enter to continue..."

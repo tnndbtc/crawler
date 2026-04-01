@@ -18,6 +18,7 @@ import pytest
 # Setup Django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+os.environ['DJANGO_ALLOW_ASYNC_UNSAFE'] = 'true'  # Allow sync ORM in async tests
 
 import django
 django.setup()
@@ -216,7 +217,7 @@ class TestHumanBrowsingSession:
             mock_client.head.assert_called_once()
             args = mock_client.head.call_args
             assert args[0][0] == 'https://example.com/'
-            assert args[1]['request_role'] == 'simulated'
+            assert args[1]['request_role'] == 'simulated_no_count'
 
     @pytest.mark.asyncio
     async def test_optional_prefetch_respects_probability(self):
@@ -249,7 +250,7 @@ class TestHumanBrowsingSession:
             mock_client.head.assert_called_once()
             args = mock_client.head.call_args
             assert args[0][0] == 'https://example.com/favicon.ico'
-            assert args[1]['request_role'] == 'simulated'
+            assert args[1]['request_role'] == 'simulated_no_count'
 
     @pytest.mark.asyncio
     async def test_pre_article_delay_waits(self):
@@ -263,7 +264,7 @@ class TestHumanBrowsingSession:
         mock_client = AsyncMock(spec=RateLimitedClient)
         session = await HumanBrowsingSession.from_config(mock_client, 'example.com')
 
-        with patch('shared.jitter.jittered_sleep') as mock_sleep:
+        with patch('shared.human_behavior.jittered_sleep') as mock_sleep:
             await session.pre_article_delay()
 
             # Verify sleep was called

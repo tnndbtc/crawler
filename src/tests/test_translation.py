@@ -3,7 +3,7 @@ Unit tests for translation module.
 
 Tests:
 - TranslationConfig.render_prompts() with various contexts
-- Error classification in OpenAI engine
+- Error classification
 - ProviderHealthManager state transitions
 - TranslationManager fallback logic
 - API filtering based on health status
@@ -15,10 +15,10 @@ import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 # Setup Django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+os.environ['DJANGO_ALLOW_ASYNC_UNSAFE'] = 'true'  # Allow sync ORM in async tests
 
 import django
 django.setup()
@@ -236,24 +236,24 @@ class TestErrorClassification:
 
     def test_quota_exceeded_error(self):
         """Test QuotaExceededError is not recoverable."""
-        error = QuotaExceededError("Quota exceeded", engine="openai")
+        error = QuotaExceededError("Quota exceeded", engine="claude")
 
-        assert error.engine == "openai"
+        assert error.engine == "claude"
         assert error.recoverable is False
         assert "Quota exceeded" in str(error)
 
     def test_authentication_error(self):
         """Test AuthenticationError is not recoverable."""
-        error = AuthenticationError("Invalid API key", engine="deepl")
+        error = AuthenticationError("CLI not found", engine="claude")
 
-        assert error.engine == "deepl"
+        assert error.engine == "claude"
         assert error.recoverable is False
 
     def test_rate_limit_error(self):
         """Test RateLimitError is recoverable."""
-        error = RateLimitError("Rate limited", engine="openai", retry_after=60)
+        error = RateLimitError("Rate limited", engine="claude", retry_after=60)
 
-        assert error.engine == "openai"
+        assert error.engine == "claude"
         assert error.recoverable is True
         assert error.retry_after == 60
 
@@ -265,12 +265,12 @@ class TestErrorClassification:
         assert error.recoverable is True
 
 
-class TestOpenAIErrorCodeClassification:
-    """Tests for OpenAI error code classification."""
+class TestQuotaErrorCodeClassification:
+    """Tests for quota error code classification in health manager."""
 
     def test_quota_error_codes(self):
         """Test that quota-related error codes are recognized."""
-        from translation.engines.openai_engine import OPENAI_QUOTA_ERROR_CODES
+        from translation.health import ProviderHealthManager
 
         quota_codes = {
             'insufficient_quota',
@@ -279,39 +279,7 @@ class TestOpenAIErrorCodeClassification:
             'quota_exceeded',
         }
 
-        assert quota_codes.issubset(OPENAI_QUOTA_ERROR_CODES)
-
-    def test_parse_error_code_from_response(self):
-        """Test parsing error code from OpenAI error response."""
-        # Create mock response
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            'error': {
-                'message': 'You exceeded your current quota',
-                'type': 'insufficient_quota',
-                'code': 'insufficient_quota'
-            }
-        }
-
-        # Import and test the engine's parser
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
-            from translation.engines.openai_engine import OpenAIEngine
-            engine = OpenAIEngine(api_key='test-key')
-
-            code = engine._parse_error_code(mock_response)
-            assert code == 'insufficient_quota'
-
-    def test_parse_error_code_invalid_response(self):
-        """Test parsing error code from malformed response."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {'unexpected': 'format'}
-
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}):
-            from translation.engines.openai_engine import OpenAIEngine
-            engine = OpenAIEngine(api_key='test-key')
-
-            code = engine._parse_error_code(mock_response)
-            assert code is None
+        assert quota_codes.issubset(ProviderHealthManager.QUOTA_ERROR_CODES)
 
 
 # ============================================================================
@@ -329,7 +297,7 @@ class TestProviderHealthManager:
 
     def test_provider_starts_available(self):
         """Test that new providers start in available state."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
 
         assert health.state == 'available'
         assert health.is_available is True
@@ -337,7 +305,7 @@ class TestProviderHealthManager:
 
     def test_mark_unavailable_funds(self):
         """Test marking provider unavailable due to quota/billing."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
         health.mark_unavailable(
             state='unavailable_funds',
             error_message='Quota exceeded',
@@ -352,10 +320,10 @@ class TestProviderHealthManager:
 
     def test_mark_unavailable_auth(self):
         """Test marking provider unavailable due to auth failure."""
-        health = ProviderHealth.get_or_create_provider('deepl')
+        health = ProviderHealth.get_or_create_provider('claude')
         health.mark_unavailable(
             state='unavailable_auth',
-            error_message='Invalid API key'
+            error_message='CLI not found'
         )
 
         assert health.state == 'unavailable_auth'
@@ -363,7 +331,7 @@ class TestProviderHealthManager:
 
     def test_mark_unavailable_rate_limit(self):
         """Test marking provider unavailable due to rate limiting."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
         health.mark_unavailable(
             state='unavailable_rate_limit',
             error_message='Too many requests'
@@ -374,7 +342,7 @@ class TestProviderHealthManager:
 
     def test_consecutive_failures_increment(self):
         """Test that consecutive failures increment."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
 
         health.mark_unavailable('unavailable_transient', 'Error 1')
         assert health.consecutive_failures == 1
@@ -387,7 +355,7 @@ class TestProviderHealthManager:
 
     def test_mark_available_resets_failures(self):
         """Test that marking available resets failure counters."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
 
         # Simulate failures
         health.mark_unavailable('unavailable_transient', 'Error')
@@ -405,7 +373,7 @@ class TestProviderHealthManager:
 
     def test_record_success_resets_failures(self):
         """Test that recording success resets failures for available provider."""
-        health = ProviderHealth.get_or_create_provider('openai')
+        health = ProviderHealth.get_or_create_provider('claude')
 
         # Provider should start available
         health.record_success()
@@ -417,28 +385,21 @@ class TestProviderHealthManager:
         """Test getting all provider health records."""
         providers = ProviderHealth.get_all_providers()
 
-        assert 'openai' in providers
-        assert 'deepl' in providers
-        assert len(providers) == 2  # Based on PROVIDER_CHOICES
+        assert 'claude' in providers
+        assert len(providers) == 1  # Only claude now
 
     def test_reset_all_providers(self):
         """Test resetting all providers to available."""
-        # Mark providers unavailable
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_unavailable('unavailable_funds', 'Quota error')
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_auth', 'Auth error')
+        # Mark provider unavailable
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_funds', 'Quota error')
 
         # Reset all
         ProviderHealth.reset_all()
 
-        # Verify all are available
-        openai.refresh_from_db()
-        deepl.refresh_from_db()
-
-        assert openai.is_available is True
-        assert deepl.is_available is True
+        # Verify available
+        claude.refresh_from_db()
+        assert claude.is_available is True
 
 
 # ============================================================================
@@ -458,27 +419,20 @@ class TestProviderHealthManagerAsync:
         """Test system is STOPPED when all providers unavailable."""
         from translation.health import ProviderHealthManager
 
-        # Mark all providers unavailable
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_unavailable('unavailable_funds', 'Quota')
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_auth', 'Auth')
+        # Mark provider unavailable
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_funds', 'Quota')
 
         # Check stopped state
         is_stopped = await ProviderHealthManager.is_stopped()
         assert is_stopped is True
 
-    async def test_not_stopped_when_one_available(self):
-        """Test system is NOT STOPPED when at least one provider available."""
+    async def test_not_stopped_when_available(self):
+        """Test system is NOT STOPPED when provider is available."""
         from translation.health import ProviderHealthManager
 
-        # One unavailable, one available
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_unavailable('unavailable_funds', 'Quota')
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_available()
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_available()
 
         # Check stopped state
         is_stopped = await ProviderHealthManager.is_stopped()
@@ -488,88 +442,73 @@ class TestProviderHealthManagerAsync:
         """Test getting list of available providers."""
         from translation.health import ProviderHealthManager
 
-        # Setup mixed availability
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_available()
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_auth', 'Auth')
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_available()
 
         available = await ProviderHealthManager.get_available_providers()
 
-        assert 'openai' in available
-        assert 'deepl' not in available
+        assert 'claude' in available
 
     async def test_get_unavailable_providers(self):
         """Test getting list of unavailable providers."""
         from translation.health import ProviderHealthManager
 
-        # Setup mixed availability
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_available()
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_auth', 'Auth')
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_auth', 'CLI not found')
 
         unavailable = await ProviderHealthManager.get_unavailable_providers()
 
-        assert 'deepl' in unavailable
-        assert 'openai' not in unavailable
+        assert 'claude' in unavailable
 
     async def test_get_health_status(self):
         """Test getting full health status."""
         from translation.health import ProviderHealthManager
 
-        # Setup
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_available()
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_funds', 'Billing error', 'quota_exceeded')
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_funds', 'Billing error', 'quota_exceeded')
 
         status = await ProviderHealthManager.get_health_status()
 
-        assert status['status'] == 'degraded'  # One available, one not
-        assert status['is_stopped'] is False
-        assert 'openai' in status['available_providers']
-        assert 'deepl' not in status['available_providers']
-        assert status['providers']['deepl']['state'] == 'unavailable_funds'
-        assert status['providers']['deepl']['last_error_code'] == 'quota_exceeded'
+        assert status['status'] == 'stopped'  # Only provider is unavailable
+        assert status['is_stopped'] is True
+        assert 'claude' not in status['available_providers']
+        assert status['providers']['claude']['state'] == 'unavailable_funds'
+        assert status['providers']['claude']['last_error_code'] == 'quota_exceeded'
 
     async def test_handle_error_marks_unavailable(self):
         """Test that handling error marks provider unavailable."""
         from translation.health import ProviderHealthManager
 
         # Start with available provider
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_available()
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_available()
 
         # Handle quota error
-        error = QuotaExceededError("Quota exceeded", engine="openai")
+        error = QuotaExceededError("Quota exceeded", engine="claude")
         new_state = await ProviderHealthManager.handle_error(
-            'openai', error, error_code='insufficient_quota'
+            'claude', error, error_code='insufficient_quota'
         )
 
         assert new_state == 'unavailable_funds'
 
         # Verify in database
-        openai.refresh_from_db()
-        assert openai.is_available is False
+        claude.refresh_from_db()
+        assert claude.is_available is False
 
     async def test_mark_success_recovers_provider(self):
         """Test that marking success recovers unavailable provider."""
         from translation.health import ProviderHealthManager
 
         # Start unavailable
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_unavailable('unavailable_transient', 'Temp error')
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_transient', 'Temp error')
 
         # Mark success
-        await ProviderHealthManager.mark_success('openai')
+        await ProviderHealthManager.mark_success('claude')
 
         # Verify recovered
-        openai.refresh_from_db()
-        assert openai.is_available is True
+        claude.refresh_from_db()
+        assert claude.is_available is True
 
 
 # ============================================================================
@@ -584,7 +523,7 @@ class TestTranslationResult:
         result = TranslationResult(
             title='Translated Title',
             description='Translated Desc',
-            engine='openai',
+            engine='claude',
             source_locale='ja-JP',
             target_locale='en-US',
         )
@@ -592,13 +531,13 @@ class TestTranslationResult:
         assert result.success is True
         assert result.error is None
         assert result.title == 'Translated Title'
-        assert result.engine == 'openai'
+        assert result.engine == 'claude'
 
     def test_error_result(self):
         """Test failed translation result."""
         result = TranslationResult.from_error(
             error='Translation failed',
-            engine='deepl',
+            engine='claude',
             source_locale='ko-KR',
             target_locale='en-US'
         )
@@ -606,7 +545,7 @@ class TestTranslationResult:
         assert result.success is False
         assert result.error == 'Translation failed'
         assert result.title == ''
-        assert result.engine == 'deepl'
+        assert result.engine == 'claude'
 
     def test_no_translation_needed(self):
         """Test result when no translation needed."""
@@ -651,33 +590,31 @@ class TestTranslationConfig:
         config = TranslationConfig.get_config()
 
         assert len(config.fallback_order) > 0
-        assert 'deepl' in config.fallback_order or 'openai' in config.fallback_order
+        assert 'claude' in config.fallback_order
 
     def test_get_effective_fallback_order_canonical(self):
         """Test effective fallback order for canonical translation."""
         config = TranslationConfig.get_config()
-        config.canonical_engine = 'deepl'
-        config.fallback_order = ['openai', 'deepl']
+        config.canonical_engine = 'claude'
+        config.fallback_order = ['claude']
         config.save()
 
         order = config.get_effective_fallback_order('canonical')
 
         # Primary engine should be first
-        assert order[0] == 'deepl'
-        # Fallbacks should follow
-        assert 'openai' in order
+        assert order[0] == 'claude'
 
     def test_get_effective_fallback_order_display(self):
         """Test effective fallback order for display translation."""
         config = TranslationConfig.get_config()
-        config.display_engine = 'openai'
-        config.fallback_order = ['deepl', 'openai']
+        config.display_engine = 'claude'
+        config.fallback_order = ['claude']
         config.save()
 
         order = config.get_effective_fallback_order('display')
 
         # Primary engine should be first
-        assert order[0] == 'openai'
+        assert order[0] == 'claude'
 
 
 # ============================================================================
@@ -734,12 +671,9 @@ class TestTranslationManagerFallback:
         """Test manager returns system_stopped when no providers available."""
         from translation.manager import TranslationManager
 
-        # Mark all providers unavailable
-        openai = ProviderHealth.get_or_create_provider('openai')
-        openai.mark_unavailable('unavailable_funds', 'Quota')
-
-        deepl = ProviderHealth.get_or_create_provider('deepl')
-        deepl.mark_unavailable('unavailable_auth', 'Auth')
+        # Mark provider unavailable
+        claude = ProviderHealth.get_or_create_provider('claude')
+        claude.mark_unavailable('unavailable_funds', 'Quota')
 
         manager = TranslationManager()
         await manager.load_config()

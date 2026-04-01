@@ -3,7 +3,7 @@ Django Admin configuration for translation engine.
 
 Provides admin interfaces for:
 - TranslationConfig: Global translation settings (singleton) with prompts
-- LLMModelConfig: LLM model configurations for OpenAI
+- LLMModelConfig: LLM model configurations (legacy)
 - ProviderHealth: Provider health status with reset actions
 """
 
@@ -16,7 +16,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils import timezone
 
-from .models import TranslationConfig, LLMModelConfig, ProviderHealth
+from .models import TranslationConfig, ProviderHealth
 
 logger = logging.getLogger(__name__)
 
@@ -38,32 +38,27 @@ class TranslationConfigAdmin(admin.ModelAdmin):
             'description': 'Enable or disable all translation processing'
         }),
         ('Canonical Translation', {
-            'fields': ('canonical_engine', 'canonical_model'),
-            'description': (
-                'Engine and model for canonical (en-US) translations used in ranking/analysis. '
-                'Select an LLM Model when using OpenAI engine.'
-            )
+            'fields': ('canonical_engine',),
+            'description': 'Engine for canonical (en-US) translations used in ranking/analysis.'
         }),
         ('Display Translation', {
-            'fields': ('display_engine', 'display_model'),
-            'description': (
-                'Engine and model for display translations (human-readable UI). '
-                'Select an LLM Model when using OpenAI engine.'
-            )
+            'fields': ('display_engine',),
+            'description': 'Engine for display translations (human-readable UI).'
         }),
         ('Fallback & Production', {
             'fields': ('fallback_order', 'production_mode'),
             'description': 'Fallback order is used when primary engine fails.'
         }),
         ('Locale Settings', {
-            'fields': ('canonical_locale', 'enabled_locales'),
+            'fields': ('canonical_locale',),
             'description': (
                 'Canonical locale is locked to en-US for cross-regional analysis. '
-                'Enabled locales are additional languages for display translations.'
+                'Target locales for display translation are configured in System Settings '
+                '(translation_target_locales).'
             )
         }),
         ('Rate Limiting', {
-            'fields': ('max_chars_per_request', 'batch_size'),
+            'fields': ('batch_size',),
         }),
     )
 
@@ -130,88 +125,6 @@ class TranslationConfigAdmin(admin.ModelAdmin):
                 f"Error testing engines: {e}",
                 messages.ERROR
             )
-
-
-@admin.register(LLMModelConfig)
-class LLMModelConfigAdmin(admin.ModelAdmin):
-    """
-    Admin for LLM model configurations.
-
-    Each entry is self-contained with model parameters AND prompts.
-    Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display").
-    """
-
-    list_display = [
-        'name',
-        'provider',
-        'model_id',
-        'temperature',
-        'is_default_display',
-        'enabled_display',
-    ]
-    list_filter = ['provider', 'enabled', 'is_default']
-    search_fields = ['name', 'model_id', 'description']
-    ordering = ['provider', 'name']
-
-    fieldsets = (
-        ('Model', {
-            'fields': ('name', 'provider', 'model_id'),
-            'description': 'Create separate entries for different purposes (e.g., "GPT-4o-mini Canonical", "GPT-4o-mini Display")'
-        }),
-        ('Parameters', {
-            'fields': ('temperature', 'top_p', 'max_tokens'),
-            'description': (
-                'Temperature: 0.0-1.0 (lower = more deterministic). '
-                'Top-p: 0.0-1.0 (nucleus sampling). '
-                'Max tokens: Maximum response length.'
-            )
-        }),
-        ('Prompts', {
-            'fields': ('system_prompt', 'developer_prompt', 'user_prompt'),
-            'description': 'Variables: {source_platform}, {original_language}, {target_locale}, {title}, {description}'
-        }),
-        ('Status', {
-            'fields': ('enabled', 'is_default', 'description'),
-        }),
-    )
-
-    actions = ['enable_models', 'disable_models', 'set_as_default']
-
-    def enabled_display(self, obj):
-        """Display enabled status with icon."""
-        if obj.enabled:
-            return format_html('✅ <span style="color: green;">Enabled</span>')
-        return format_html('❌ <span style="color: red;">Disabled</span>')
-    enabled_display.short_description = 'Status'
-
-    def is_default_display(self, obj):
-        """Display default status with icon."""
-        if obj.is_default:
-            return format_html('⭐ <span style="color: gold;">Default</span>')
-        return '-'
-    is_default_display.short_description = 'Default'
-
-    @admin.action(description='Enable selected models')
-    def enable_models(self, request, queryset):
-        updated = queryset.update(enabled=True)
-        self.message_user(request, f'{updated} model(s) enabled.')
-
-    @admin.action(description='Disable selected models')
-    def disable_models(self, request, queryset):
-        updated = queryset.update(enabled=False)
-        self.message_user(request, f'{updated} model(s) disabled.')
-
-    @admin.action(description='Set as default (for each provider)')
-    def set_as_default(self, request, queryset):
-        for model in queryset:
-            model.is_default = True
-            model.save()
-        self.message_user(
-            request,
-            f'Set {queryset.count()} model(s) as default. '
-            f'Note: Only one default per provider is allowed.'
-        )
-
 
 
 @admin.register(ProviderHealth)

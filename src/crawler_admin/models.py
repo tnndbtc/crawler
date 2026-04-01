@@ -316,7 +316,7 @@ class TrendItem(models.Model):
         max_length=20,
         null=True,
         blank=True,
-        help_text="Engine used for canonical translation (deepl, openai, local, none)"
+        help_text="Engine used for canonical translation (claude, none)"
     )
     canonical_error = models.TextField(
         null=True,
@@ -457,9 +457,7 @@ class TrendItemTranslation(models.Model):
     ]
 
     PROVIDER_CHOICES = [
-        ('deepl', 'DeepL'),
-        ('openai', 'OpenAI'),
-        ('argostranslate', 'Argostranslate (Offline)'),
+        ('claude', 'Claude CLI'),
         ('none', 'No Translation (English variants)'),
     ]
 
@@ -669,7 +667,7 @@ class ItemDerivation(models.Model):
     # Metadata
     engine = models.CharField(
         max_length=20,
-        help_text="Engine/provider used (e.g., 'deepl', 'openai')"
+        help_text="Engine/provider used (e.g., 'claude')"
     )
     status = models.CharField(
         max_length=20,
@@ -700,8 +698,8 @@ class ItemDerivation(models.Model):
     class Meta:
         unique_together = [['item', 'derivation_type', 'target_locale']]
         ordering = ['-created_at']
-        verbose_name = "Item Derivation"
-        verbose_name_plural = "Item Derivations"
+        verbose_name = "Translated Item"
+        verbose_name_plural = "Translated Items"
         indexes = [
             models.Index(fields=['item', 'derivation_type', 'target_locale']),
             models.Index(fields=['derivation_type', 'status']),

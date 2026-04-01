@@ -2,8 +2,7 @@
 Translation Engine - Pluggable multi-engine translation system.
 
 This Django app provides:
-- Configurable translation engines (DeepL, OpenAI)
-- Admin-managed prompts for LLM-based translations (in TranslationConfig)
+- Claude CLI translation engine (via `claude -p`)
 - Fallback handling with configurable engine priority
 - Separate canonical (en-US) and display translation pipelines
 

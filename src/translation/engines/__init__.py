@@ -18,8 +18,8 @@ def register_engine(name: str):
     Decorator to register a translation engine.
 
     Usage:
-        @register_engine('deepl')
-        class DeepLEngine(BaseTranslationEngine):
+        @register_engine('claude')
+        class ClaudeEngine(BaseTranslationEngine):
             ...
     """
     def decorator(cls: Type['BaseTranslationEngine']):
@@ -33,7 +33,7 @@ def get_engine_class(name: str) -> Type['BaseTranslationEngine']:
     Get engine class by name.
 
     Args:
-        name: Engine name (e.g., 'deepl', 'openai', 'local')
+        name: Engine name (e.g., 'claude')
 
     Returns:
         Engine class
@@ -53,9 +53,7 @@ def get_available_engines() -> Dict[str, Type['BaseTranslationEngine']]:
 
 
 # Import engines to register them
-from .deepl_engine import DeepLEngine  # noqa: F401, E402
-from .openai_engine import OpenAIEngine  # noqa: F401, E402
-# LocalEngine (argostranslate) removed due to poor quality
+from .claude_engine import ClaudeEngine  # noqa: F401, E402
 
 # Conditionally import test engine if TRANSLATION_TEST_MODE=true
 import os

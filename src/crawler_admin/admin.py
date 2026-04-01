@@ -6,7 +6,7 @@ Requirements from REQUIREMENTS-MASTER.md:
 - TrendItem: Custom filter for missing canonical translation
 - TrendSurface: Health indicators, bulk enable/disable
 - Region: Basic CRUD
-- TrendItemTranslation: Basic CRUD with filters
+- ItemDerivation (Translated Items): Translation results
 
 Note: TranslationSettings has been removed. Use translation.models.TranslationConfig instead.
 """
@@ -19,7 +19,6 @@ from .models import (
     Region,
     TrendSurface,
     TrendItem,
-    TrendItemTranslation,
     CrawlRun,
     ItemDerivation,
     SystemSettings
@@ -48,9 +47,10 @@ class MissingCanonicalTranslationFilter(admin.SimpleListFilter):
 
     def queryset(self, request, queryset):
         # Subquery to check if en-US translation exists
-        has_en_translation = TrendItemTranslation.objects.filter(
+        has_en_translation = ItemDerivation.objects.filter(
             item=OuterRef('pk'),
-            locale='en-US',
+            derivation_type='translation',
+            target_locale='en',
             status='complete'
         )
 
@@ -367,48 +367,6 @@ class TrendItemAdmin(admin.ModelAdmin):
             icon, color, hotness_str
         )
     hotness_display.short_description = 'Hotness'
-
-
-@admin.register(TrendItemTranslation)
-class TrendItemTranslationAdmin(admin.ModelAdmin):
-    """
-    Basic CRUD for translations with filters.
-    """
-    list_display = [
-        'item_id',
-        'item_title_snippet',
-        'locale',
-        'status',
-        'provider',
-        'translated_at'
-    ]
-    list_filter = [
-        'status',
-        'provider',
-        'locale',
-    ]
-    search_fields = ['item__title_original', 'title']
-    ordering = ['-translated_at']
-    date_hierarchy = 'translated_at'
-
-    fieldsets = (
-        ('Translation', {
-            'fields': ('item', 'locale', 'title', 'description')
-        }),
-        ('Status', {
-            'fields': ('status', 'provider', 'error_message', 'translated_at')
-        }),
-    )
-
-    readonly_fields = ['translated_at']
-
-    def item_title_snippet(self, obj):
-        """Display truncated original title."""
-        title = obj.item.title_original
-        if len(title) > 40:
-            return title[:40] + '...'
-        return title
-    item_title_snippet.short_description = 'Original Title'
 
 
 @admin.register(CrawlRun)

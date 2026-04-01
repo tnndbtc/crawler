@@ -33,10 +33,10 @@ class ProviderHealthManager:
         providers = await ProviderHealthManager.get_available_providers()
 
         # Handle errors
-        await ProviderHealthManager.handle_error('openai', error, error_code='quota_exceeded')
+        await ProviderHealthManager.handle_error('claude', error, error_code='quota_exceeded')
 
         # Mark success
-        await ProviderHealthManager.mark_success('deepl')
+        await ProviderHealthManager.mark_success('claude')
     """
 
     # Map HTTP status codes to unavailable states
@@ -50,8 +50,8 @@ class ProviderHealthManager:
         504: 'unavailable_transient',
     }
 
-    # OpenAI error codes that indicate billing/quota issues
-    OPENAI_QUOTA_ERROR_CODES = {
+    # Error codes that indicate billing/quota issues
+    QUOTA_ERROR_CODES = {
         'insufficient_quota',
         'billing_hard_limit_reached',
         'billing_not_active',
@@ -71,7 +71,7 @@ class ProviderHealthManager:
         Handle a provider error and update health status.
 
         Args:
-            provider: Provider name ('openai', 'deepl')
+            provider: Provider name (e.g., 'claude')
             error: The exception that occurred
             http_status: HTTP status code if available
             error_code: Specific error code (e.g., 'insufficient_quota')
@@ -82,7 +82,7 @@ class ProviderHealthManager:
         from .models import ProviderHealth
 
         # Determine the appropriate unavailable state
-        if error_code and error_code in cls.OPENAI_QUOTA_ERROR_CODES:
+        if error_code and error_code in cls.QUOTA_ERROR_CODES:
             state = 'unavailable_funds'
         elif http_status:
             state = cls.HTTP_STATUS_TO_STATE.get(http_status, 'unavailable_transient')
@@ -120,7 +120,7 @@ class ProviderHealthManager:
         the provider is marked as available.
 
         Args:
-            provider: Provider name ('openai', 'deepl')
+            provider: Provider name (e.g., 'claude')
         """
         from .models import ProviderHealth
 
