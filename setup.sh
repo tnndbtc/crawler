@@ -111,6 +111,9 @@ is_service_running() {
         hotness_worker)
             process_pid=$(ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             ;;
+        summarization_worker)
+            process_pid=$(ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
     esac
 
     if [ ! -z "$process_pid" ]; then
@@ -159,6 +162,9 @@ get_service_pid() {
             ;;
         hotness_worker)
             ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        summarization_worker)
+            ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
             ;;
         *)
             echo ""
@@ -343,6 +349,9 @@ stop_service() {
         hotness_worker)
             all_pids=$(ps aux | grep -E "hotness_worker\.(py|sh)|tee.*hotness_worker" | grep -v grep | awk '{print $2}')
             ;;
+        summarization_worker)
+            all_pids=$(ps aux | grep -E "summarization_worker\.(py|sh)|tee.*summarization_worker" | grep -v grep | awk '{print $2}')
+            ;;
     esac
 
     # Also include PID file pid
@@ -465,6 +474,9 @@ load_seeds()
     start_service "hotness_worker" "Hotness Worker" \
         "${SCRIPT_DIR}/scripts/run_hotness_worker.sh"
 
+    start_service "summarization_worker" "Summarization Worker" \
+        "${SCRIPT_DIR}/scripts/run_summarization_worker.sh"
+
     echo ""
     print_success "All services started!"
     print_info "Use option 5 to check service status"
@@ -477,6 +489,7 @@ stop_all_services() {
 
     # Step 1: Stop tracked services (original behavior)
     print_step "Stopping tracked services..."
+    stop_service "summarization_worker" "Summarization Worker"
     stop_service "hotness_worker" "Hotness Worker"
     stop_service "translation_worker" "Translation Worker"
     stop_service "surface_worker" "Surface Worker"
@@ -548,7 +561,7 @@ restart_all_services() {
 start_or_restart_services() {
     # If anything is running, restart. Otherwise just start.
     local any_running=false
-    for svc in django_admin api_server surface_worker translation_worker hotness_worker; do
+    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker; do
         if is_service_running "$svc"; then
             any_running=true
             break
@@ -571,6 +584,7 @@ show_service_status() {
         "surface_worker:Surface Worker:-"
         "translation_worker:Translation Worker:-"
         "hotness_worker:Hotness Worker:-"
+        "summarization_worker:Summarization Worker:-"
     )
 
     echo -e "${BOLD}Service                    Status      PID       Port${NC}"

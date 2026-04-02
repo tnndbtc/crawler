@@ -243,7 +243,18 @@ class TrendItem(models.Model):
     description_original = models.TextField(
         null=True,
         blank=True,
-        help_text="Original description/snippet (if available)"
+        help_text="AI-generated summary (repurposed from raw snippet). Raw content preserved in raw_payload."
+    )
+    summary_status = models.CharField(
+        max_length=20,
+        default='pending',
+        choices=[
+            ('pending', 'Pending'),
+            ('complete', 'Complete'),
+            ('failed', 'Failed'),
+            ('skipped', 'Skipped (no summarizable content)'),
+        ],
+        help_text="AI summarization status for description_original"
     )
     original_locale = models.CharField(
         max_length=10,

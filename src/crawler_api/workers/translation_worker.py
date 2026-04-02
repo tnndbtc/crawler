@@ -85,7 +85,8 @@ async def process_canonical_translations(manager: TranslationManager, batch_size
     # - Not already English (would be 'skipped')
     items_need_canonical = await sync_to_async(list)(
         TrendItem.objects.filter(
-            canonical_status='pending'
+            canonical_status='pending',
+            summary_status__in=['complete', 'skipped'],  # Wait for summarization first
         ).exclude(
             original_locale__startswith='en-'
         ).select_related('region', 'surface')[:batch_size]
@@ -475,6 +476,8 @@ async def mark_english_items_as_skipped(batch_size: int = 100) -> int:
     items = await sync_to_async(list)(
         TrendItem.objects.filter(
             canonical_status='pending',
+            # English items: skip immediately regardless of summary_status
+            # (no translation needed — canonical = original)
             original_locale__startswith='en-'
         )[:batch_size]
     )

@@ -31,6 +31,67 @@ logger = logging.getLogger(__name__)
 # YouTube Data API v3 endpoint
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
+# Fetch top comments only for top N videos
+COMMENT_FETCH_RANK_LIMIT = 20
+TOP_COMMENTS_COUNT = 5
+
+
+async def fetch_top_comments(
+    client: httpx.AsyncClient,
+    api_key: str,
+    video_id: str,
+    limit: int = TOP_COMMENTS_COUNT,
+) -> List[str]:
+    """
+    Fetch top comments for a YouTube video.
+
+    Uses commentThreads.list with order=relevance so the most
+    meaningful viewer reactions appear first.
+
+    Args:
+        client: HTTP client
+        api_key: YouTube Data API key
+        video_id: YouTube video ID
+        limit: Max number of comments to fetch
+
+    Returns:
+        List of comment text strings, empty on failure
+    """
+    params = {
+        'part': 'snippet',
+        'videoId': video_id,
+        'order': 'relevance',
+        'maxResults': limit,
+        'key': api_key,
+        'textFormat': 'plainText',
+    }
+
+    try:
+        response = await client.get(
+            f"{YOUTUBE_API_BASE}/commentThreads",
+            params=params
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        comments = []
+        for item in data.get('items', []):
+            text = (
+                item.get('snippet', {})
+                    .get('topLevelComment', {})
+                    .get('snippet', {})
+                    .get('textOriginal', '')
+                    .strip()
+            )
+            if text:
+                comments.append(text[:300])
+
+        return comments
+
+    except Exception as e:
+        logger.debug(f"Could not fetch comments for YouTube video {video_id}: {e}")
+        return []
+
 
 async def fetch_popular_recent_videos(
     client: httpx.AsyncClient,
@@ -134,6 +195,21 @@ async def fetch_popular_recent_videos(
             likes = int(statistics.get('likeCount', 0))
             comments = int(statistics.get('commentCount', 0))
 
+            # Fetch top comments for top-ranked videos
+            top_comments: List[str] = []
+            if rank <= COMMENT_FETCH_RANK_LIMIT:
+                top_comments = await fetch_top_comments(client, api_key, video_id)
+
+            # Extract best available thumbnail URL
+            thumbnails = snippet.get('thumbnails', {})
+            thumbnail_url = (
+                thumbnails.get('maxres', {}).get('url') or
+                thumbnails.get('high', {}).get('url') or
+                thumbnails.get('medium', {}).get('url') or
+                thumbnails.get('default', {}).get('url') or
+                f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+            )
+
             item: CollectedItem = {
                 "external_id": video_id,
                 "title": title,
@@ -149,7 +225,9 @@ async def fetch_popular_recent_videos(
                 },
                 "raw_payload": {
                     **video,
-                    "_source": "popular_recent"  # Mark as from popular mode
+                    "_source": "popular_recent",
+                    "top_comments": top_comments,
+                    "_thumbnail_url": thumbnail_url,
                 },
             }
             items.append(item)
@@ -291,6 +369,21 @@ async def collect(
             likes = int(statistics.get('likeCount', 0))
             comments = int(statistics.get('commentCount', 0))
 
+            # Fetch top comments for top-ranked videos
+            top_comments: List[str] = []
+            if rank <= COMMENT_FETCH_RANK_LIMIT:
+                top_comments = await fetch_top_comments(client, api_key, video_id)
+
+            # Extract best available thumbnail URL
+            thumbnails = snippet.get('thumbnails', {})
+            thumbnail_url = (
+                thumbnails.get('maxres', {}).get('url') or
+                thumbnails.get('high', {}).get('url') or
+                thumbnails.get('medium', {}).get('url') or
+                thumbnails.get('default', {}).get('url') or
+                f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+            )
+
             # Build collected item
             item: CollectedItem = {
                 "external_id": video_id,
@@ -311,10 +404,12 @@ async def collect(
                 },
 
                 # CRITICAL: raw_payload (from /tmp/t9)
-                # ENHANCED: Mark source as trending mode
+                # ENHANCED: Mark source as trending mode + top comments + thumbnail
                 "raw_payload": {
                     **video,
-                    "_source": "trending"
+                    "_source": "trending",
+                    "top_comments": top_comments,
+                    "_thumbnail_url": thumbnail_url,
                 },
             }
             items.append(item)

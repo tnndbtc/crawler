@@ -167,6 +167,12 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     # This prevents "SynchronousOnlyOperation" errors when accessing item.surface/region
     base_query = base_query.select_related('surface', 'region')
 
+    # CRITICAL: Only translate items whose summarization is done.
+    # Translating raw text before the AI summary is written produces stale translations
+    # that persist forever (derivation_exists check blocks retry). Gate here ensures
+    # every derivation is a translation of the summary, not the original raw text.
+    base_query = base_query.filter(summary_status__in=['complete', 'skipped'])
+
     # Skip same-language translations (e.g., don't translate English→English)
     base_query = base_query.exclude(lang_group=target_lang_group)
 

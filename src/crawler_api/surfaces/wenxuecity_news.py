@@ -14,6 +14,7 @@ Language: Simplified Chinese (zh-Hans)
 Update Frequency: Every 2 hours
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -33,8 +34,71 @@ logger = logging.getLogger(__name__)
 # Base URL
 BASE_URL = "https://www.wenxuecity.com/"
 
+# How many articles to fetch body text for (top N by rank, to limit HTTP overhead)
+ARTICLE_BODY_FETCH_LIMIT = 20
+
+# Max chars of article body to store (summarization worker will condense further)
+ARTICLE_BODY_MAX_CHARS = 3000
+
+# CSS selectors tried in order to find article body on wenxuecity article pages
+ARTICLE_BODY_SELECTORS = [
+    'div.article-content',
+    'div#article-content',
+    'div.content',
+    'div#content',
+    'div.article',
+    'article',
+    'div.main-content',
+    'div[class*="article"]',
+    'div[class*="content"]',
+]
+
 # Date pattern in URL: /news/YYYY/MM/DD/######.html
 URL_DATE_PATTERN = re.compile(r'/news/(\d{4})/(\d{2})/(\d{2})/')
+
+
+async def fetch_article_body(
+    client: RateLimitedClient,
+    url: str,
+    headers: dict,
+) -> Optional[str]:
+    """
+    Fetch a Wenxuecity article page and extract the main body text.
+
+    Tries multiple CSS selectors in order; falls back to joining all <p> tags
+    inside the page body if none match.
+
+    Returns up to ARTICLE_BODY_MAX_CHARS of plain text, or None on failure.
+    """
+    try:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Try known selectors first
+        body_elem = None
+        for selector in ARTICLE_BODY_SELECTORS:
+            body_elem = soup.select_one(selector)
+            if body_elem:
+                break
+
+        if body_elem:
+            text = body_elem.get_text(separator=' ', strip=True)
+        else:
+            # Fallback: collect all <p> text from the page
+            paragraphs = soup.find_all('p')
+            text = ' '.join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+
+        text = text.strip()
+        if len(text) < 50:
+            # Too short — probably failed to find real content
+            return None
+
+        return text[:ARTICLE_BODY_MAX_CHARS]
+
+    except Exception as e:
+        logger.debug(f"Could not fetch article body from {url}: {e}")
+        return None
 
 
 def extract_date_from_url(url: str) -> Optional[datetime]:
@@ -127,14 +191,26 @@ async def collect(
                     # Make URL absolute
                     full_url = urljoin(BASE_URL, relative_url)
 
-                    # Optional: prefetch for this article URL
-                    await human_session.optional_prefetch(full_url)
-
                     # Extract publication date from URL
                     published_at = extract_date_from_url(relative_url)
                     if not published_at:
                         # Fallback to current time if date cannot be extracted
                         published_at = datetime.now(timezone.utc)
+
+                    # Fetch article body for top-ranked articles
+                    # Gives the summarization worker real content to work with
+                    article_body = None
+                    if idx < ARTICLE_BODY_FETCH_LIMIT:
+                        article_body = await fetch_article_body(client, full_url, headers)
+                        if article_body:
+                            logger.debug(
+                                f"Fetched article body for rank {idx+1}: {len(article_body)} chars"
+                            )
+                        # Small delay to be polite between article fetches
+                        await asyncio.sleep(0.5)
+                    else:
+                        # Still do human-like prefetch for lower-ranked items
+                        await human_session.optional_prefetch(full_url)
 
                     # Create unique source ID from URL
                     source_id = f"wenxuecity_{relative_url.replace('/', '_')}"
@@ -145,16 +221,17 @@ async def collect(
                         source_id=source_id,
                         url=full_url,
                         title=title,
-                        description=None,  # Not available in listing
+                        description=article_body,  # Raw body for top articles; None for the rest
                         author=None,
                         published_at=published_at,
                         rank_position=idx + 1,
                         engagement_signals={},  # No metrics in listing
                         locale=locale,
-                        metadata={
+                        raw_payload={
                             "source_name": "文学城",
                             "language": "zh-Hans",
-                            "content_type": "news"
+                            "content_type": "news",
+                            "article_body": article_body,  # Preserved even after summary overwrites description_original
                         }
                     )
 

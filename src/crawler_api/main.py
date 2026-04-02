@@ -136,6 +136,9 @@ class TrendItemResponse(BaseModel):
     rank_position: Optional[int]
     engagement_signals: dict
 
+    # Media
+    thumbnail_url: Optional[str]
+
     # Timestamps
     published_at: Optional[datetime]
     collected_at: datetime
@@ -499,7 +502,12 @@ async def list_trends(
             display_description = derivation.content_body
         elif lang == 'zh-Hans':
             # 2. Check new zh-Hans inline fields (backward compatibility)
-            if item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
+            # SKIP native Chinese items — their display_description_zh_hans was captured
+            # by mark_native_items_as_skipped BEFORE summarization ran, so it holds
+            # the old raw text. Native items fall through to step 4 which reads
+            # description_original directly (always up-to-date with the summary).
+            is_native_zh = item.original_locale.startswith('zh')
+            if not is_native_zh and item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
                 display_title = item.display_title_zh_hans
                 display_description = item.display_description_zh_hans
 
@@ -539,6 +547,7 @@ async def list_trends(
                 display_description=display_description,
                 rank_position=item.rank_position,
                 engagement_signals=item.engagement_signals,
+                thumbnail_url=(item.raw_payload or {}).get('_thumbnail_url'),
                 published_at=item.published_at,
                 collected_at=item.collected_at
             )

@@ -13,6 +13,7 @@ Surface type: ranking
 Bucket: hot_now (major trending content)
 """
 
+import asyncio
 import logging
 from typing import Optional, Tuple, List
 from datetime import datetime, timezone
@@ -26,6 +27,70 @@ logger = logging.getLogger(__name__)
 
 # Reddit JSON API base URL
 REDDIT_BASE = "https://www.reddit.com"
+
+# Fetch top comments only for top N link posts (no selftext)
+COMMENT_FETCH_RANK_LIMIT = 20
+TOP_COMMENTS_COUNT = 5
+
+
+async def fetch_top_comments(
+    client: RateLimitedClient,
+    post_id: str,
+    headers: dict,
+    limit: int = TOP_COMMENTS_COUNT,
+) -> List[str]:
+    """
+    Fetch top comments for a Reddit link post.
+
+    Only called for link posts (is_self=False) where there is no body text.
+    Stores up to `limit` top-level comments (300 chars each) for the
+    summarization worker to summarize alongside engagement signals.
+
+    Args:
+        client: HTTP client
+        post_id: Reddit post ID (e.g. "abc123")
+        headers: Request headers (must include User-Agent)
+        limit: Max number of comments to fetch
+
+    Returns:
+        List of comment body strings, empty on failure
+    """
+    url = f"{REDDIT_BASE}/comments/{post_id}.json"
+    params = {'sort': 'top', 'limit': limit, 'raw_json': 1, 'depth': 1}
+    # Force JSON response — without this Reddit may redirect to HTML login page
+    json_headers = {**headers, 'Accept': 'application/json'}
+
+    try:
+        response = await client.get(url, params=params, headers=json_headers)
+        response.raise_for_status()
+
+        # Validate content-type before parsing — Reddit returns HTML on auth redirect
+        content_type = response.headers.get('content-type', '')
+        if 'json' not in content_type:
+            logger.debug(f"Reddit comments returned non-JSON for {post_id}: {content_type}")
+            return []
+
+        data = response.json()
+
+        # Response is [post_listing, comments_listing]
+        if not isinstance(data, list) or len(data) < 2:
+            return []
+
+        comments = []
+        for child in data[1].get('data', {}).get('children', []):
+            if child.get('kind') != 't1':
+                continue
+            body = child.get('data', {}).get('body', '').strip()
+            if body and body not in ('[deleted]', '[removed]'):
+                comments.append(body[:300])
+            if len(comments) >= limit:
+                break
+
+        return comments
+
+    except Exception as e:
+        logger.debug(f"Could not fetch comments for Reddit post {post_id}: {e}")
+        return []
 
 
 async def collect(
@@ -87,6 +152,35 @@ async def collect(
         response = await client.get(url, params=params, headers=headers)
         response.raise_for_status()
         data = response.json()
+
+        # Fetch top comments for top-ranked link posts (no selftext)
+        # Collect candidate post IDs first, then fetch concurrently (max 3 at a time)
+        posts_preview = data.get('data', {}).get('children', [])
+        link_post_ids = []
+        for pw in posts_preview[:COMMENT_FETCH_RANK_LIMIT]:
+            p = pw.get('data', {})
+            if pw.get('kind') != 't3':
+                continue
+            if p.get('over_18', False):
+                continue
+            if not p.get('is_self', False):
+                pid = p.get('id', '')
+                if pid:
+                    link_post_ids.append(pid)
+
+        # Fetch concurrently with semaphore to avoid rate-limiting
+        top_comments_map: dict = {}
+        sem = asyncio.Semaphore(3)
+
+        async def _fetch_with_sem(pid: str):
+            async with sem:
+                return pid, await fetch_top_comments(client, pid, headers)
+
+        results = await asyncio.gather(*[_fetch_with_sem(pid) for pid in link_post_ids])
+        for pid, comments in results:
+            if comments:
+                top_comments_map[pid] = comments
+                logger.debug(f"Fetched {len(comments)} comments for link post {pid}")
 
     # Parse response
     items: List[CollectedItem] = []
@@ -157,6 +251,26 @@ async def collect(
         domain = post.get('domain', '')
         gilded = post.get('gilded', 0)  # Number of gold awards
 
+        # Extract thumbnail/image URL
+        # For image posts: use the direct image URL
+        # For others: use Reddit's preview thumbnail (HTML-encoded ampersands need decoding)
+        thumbnail_url = None
+        if post_hint == 'image' and 'i.redd.it' in post_url:
+            thumbnail_url = post_url
+        else:
+            # Try preview image (highest resolution available)
+            preview_images = post.get('preview', {}).get('images', [])
+            if preview_images:
+                source = preview_images[0].get('source', {})
+                raw_url = source.get('url', '')
+                # Reddit encodes & as &amp; in preview URLs
+                thumbnail_url = raw_url.replace('&amp;', '&') if raw_url else None
+            # Fallback to Reddit's own thumbnail field
+            if not thumbnail_url:
+                thumb = post.get('thumbnail', '')
+                if thumb and thumb not in ('self', 'default', 'nsfw', 'spoiler', ''):
+                    thumbnail_url = thumb
+
         # Build collected item
         item: CollectedItem = {
             "external_id": post_id,
@@ -190,7 +304,11 @@ async def collect(
                     "post_hint": post_hint,
                     "domain": domain,
                     "author": author,
-                }
+                },
+                # Top comments for link posts (used by summarization worker)
+                "top_comments": top_comments_map.get(post_id, []),
+                # Thumbnail/image URL for display in UI
+                "_thumbnail_url": thumbnail_url,
             },
         }
         items.append(item)
