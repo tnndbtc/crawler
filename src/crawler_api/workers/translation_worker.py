@@ -55,6 +55,10 @@ TRANSLATION_WORKER_POLL_INTERVAL = int(os.getenv('TRANSLATION_WORKER_POLL_INTERV
 HEALTH_PROBE_INTERVAL = 300  # 5 minutes between health probes when STOPPED
 _last_health_probe_time: float = 0
 
+# Retry failed translations configuration
+FAILED_RETRY_INTERVAL = 3600  # Retry failed translations every 1 hour
+_last_failed_retry_time: float = 0
+
 
 
 async def process_canonical_translations(manager: TranslationManager, batch_size: int = 10) -> int:
@@ -642,6 +646,49 @@ async def run_health_probes(manager: TranslationManager) -> bool:
     return any_recovered
 
 
+async def retry_failed_translations(batch_size: int = 50) -> int:
+    """
+    Reset failed canonical translations back to pending so they get retried.
+
+    Called periodically (every FAILED_RETRY_INTERVAL seconds) to recover items
+    that failed due to transient errors like API rate limits.
+
+    Returns:
+        Number of items reset to pending
+    """
+    global _last_failed_retry_time
+    current_time = time.time()
+
+    if current_time - _last_failed_retry_time < FAILED_RETRY_INTERVAL:
+        return 0
+
+    _last_failed_retry_time = current_time
+
+    # Reset failed canonical translations
+    failed_items = await sync_to_async(list)(
+        TrendItem.objects.filter(canonical_status='failed')[:batch_size]
+    )
+
+    if not failed_items:
+        return 0
+
+    count = 0
+    for item in failed_items:
+        item.canonical_status = 'pending'
+        item.canonical_title = None
+        item.canonical_description = None
+        item.canonical_error = None
+        await sync_to_async(item.save)(
+            update_fields=['canonical_status', 'canonical_title', 'canonical_description', 'canonical_error']
+        )
+        count += 1
+
+    if count > 0:
+        logger.info(f"♻️  Reset {count} failed canonical translation(s) to pending for retry")
+
+    return count
+
+
 async def run_worker_loop():
     """
     Main worker loop.
@@ -703,6 +750,9 @@ async def run_worker_loop():
                     continue
 
             batch_size = config.batch_size
+
+            # 0. Retry failed translations periodically (rate limit recovery)
+            await retry_failed_translations(batch_size)
 
             # 1. Mark English items as skipped
             skipped_english = await mark_english_items_as_skipped(batch_size)

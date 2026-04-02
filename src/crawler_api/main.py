@@ -63,12 +63,8 @@ app = FastAPI(
 # Allow cross-origin requests from the UI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://192.168.86.41:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -407,13 +403,23 @@ async def list_trends(
     if lang_group:
         queryset = queryset.filter(lang_group=lang_group)
 
+    # Exclude items where canonical translation failed (untranslatable to frontend)
+    # English-origin items (skipped) are always included — they don't need translation
+    queryset = queryset.exclude(
+        canonical_status='failed'
+    )
+
     # Apply cursor filter
     cursor_id = None
     if cursor:
         try:
             # Try to decode as JSON first (zh-Hans format)
             cursor_data = json.loads(base64.b64decode(cursor).decode('utf-8'))
-            cursor_id = cursor_data.get('id')
+            if isinstance(cursor_data, dict):
+                cursor_id = cursor_data.get('id')
+            else:
+                # JSON decoded but not a dict (e.g. plain integer) — treat as ID
+                cursor_id = int(cursor_data)
         except (ValueError, json.JSONDecodeError):
             # Fall back to simple ID encoding (en-US format)
             try:
