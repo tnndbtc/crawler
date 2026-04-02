@@ -302,6 +302,9 @@ async def run_worker_loop():
     logger.info(f"SURFACE_WORKER_POLL_INTERVAL: {SURFACE_WORKER_POLL_INTERVAL}")
     logger.info(f"BUCKET_CAP_PERCENT: {BUCKET_CAP_PERCENT}%")
 
+    # Track last cleanup time (run once per day)
+    last_cleanup_time = 0
+
     while True:
         try:
             # Get due surfaces
@@ -326,6 +329,16 @@ async def run_worker_loop():
                 logger.info(f"Completed {len(due_surfaces)} surface(s)")
             else:
                 logger.debug("No due surfaces found")
+
+            # Daily data cleanup
+            now = time.time()
+            if now - last_cleanup_time > 86400:  # 24 hours
+                try:
+                    from shared.data_cleanup import cleanup_old_data
+                    result = await sync_to_async(cleanup_old_data)()
+                    last_cleanup_time = now
+                except Exception as e:
+                    logger.error(f"Data cleanup error: {e}", exc_info=True)
 
         except Exception as e:
             # Never crash the worker loop

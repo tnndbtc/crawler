@@ -1,0 +1,165 @@
+{
+  "regions": [
+    {"key": "us", "name": "United States", "default_locale": "en-US", "enabled": true},
+    {"key": "jp", "name": "Japan", "default_locale": "ja-JP", "enabled": true},
+    {"key": "kr", "name": "South Korea", "default_locale": "ko-KR", "enabled": true},
+    {"key": "cn", "name": "China", "default_locale": "zh-Hans", "enabled": true}
+  ],
+
+  "surfaces": [
+    {
+      "region": "us", "key": "reddit_hot", "platform": "reddit",
+      "surface_type": "ranking", "bucket": "hot_now", "bucket_weight": 1.5,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 100,
+      "config_json": {"subreddit": "all", "limit": 100}
+    },
+    {
+      "region": "us", "key": "youtube_trending", "platform": "youtube",
+      "surface_type": "ranking", "bucket": "category_entertainment", "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true, "poll_interval_seconds": 7200, "max_items_per_run": 50,
+      "config_json": {"region_code": "US", "locale": "en-US", "dual_mode": false}
+    },
+    {
+      "region": "jp", "key": "yahoo_jp_ranking", "platform": "yahoo_japan",
+      "surface_type": "ranking", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.yahoo_jp_ranking:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 20,
+      "config_json": {"category": "all"}
+    },
+    {
+      "region": "us", "key": "bbc_news", "platform": "bbc",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.bbc_news:collect",
+      "enabled": true, "poll_interval_seconds": 1200, "max_items_per_run": 40,
+      "config_json": {"locale": "en-GB"}
+    },
+    {
+      "region": "us", "key": "google_news", "platform": "google_news",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true, "poll_interval_seconds": 900, "max_items_per_run": 50,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "reuters_news", "platform": "reuters",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reuters_news:collect",
+      "enabled": true, "poll_interval_seconds": 900, "max_items_per_run": 40,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "ap_news", "platform": "ap",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.ap_news:collect",
+      "enabled": true, "poll_interval_seconds": 1200, "max_items_per_run": 40,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "guardian_news", "platform": "guardian",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.guardian_news:collect",
+      "enabled": true, "poll_interval_seconds": 1200, "max_items_per_run": 40,
+      "config_json": {"locale": "en-GB"}
+    },
+    {
+      "region": "us", "key": "aljazeera_news", "platform": "aljazeera",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.aljazeera_news:collect",
+      "enabled": true, "poll_interval_seconds": 1200, "max_items_per_run": 40,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "wenxuecity_news", "platform": "wenxuecity",
+      "surface_type": "news", "bucket": "region_local", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.wenxuecity_news:collect",
+      "enabled": true, "poll_interval_seconds": 7200, "max_items_per_run": 40,
+      "config_json": {"locale": "zh-Hans"}
+    },
+    {
+      "region": "us", "key": "billboard_news", "platform": "billboard",
+      "surface_type": "news", "bucket": "category_entertainment", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.billboard_news:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "variety_news", "platform": "variety",
+      "surface_type": "news", "bucket": "category_entertainment", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.variety_news:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "ign_news", "platform": "ign",
+      "surface_type": "news", "bucket": "category_gaming", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.ign_news:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "polygon_news", "platform": "polygon",
+      "surface_type": "news", "bucket": "category_gaming", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.polygon_news:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"locale": "en-US"}
+    },
+    {
+      "region": "us", "key": "hackernews", "platform": "hackernews",
+      "surface_type": "ranking", "bucket": "category_tech", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.hackernews:collect",
+      "enabled": true, "poll_interval_seconds": 1200, "max_items_per_run": 30,
+      "config_json": {}
+    },
+    {
+      "region": "us", "key": "google_trends", "platform": "google_trends",
+      "surface_type": "trending", "bucket": "hot_now", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_trends:collect",
+      "enabled": true, "poll_interval_seconds": 10800, "max_items_per_run": 30,
+      "config_json": {"geo": "US", "locale": "en-US", "max_daily": 20, "max_realtime": 10, "include_realtime": true}
+    },
+    {
+      "region": "us", "key": "twitter_trending", "platform": "twitter",
+      "surface_type": "trending", "bucket": "rising", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.twitter_trending:collect",
+      "enabled": false, "poll_interval_seconds": 3600, "max_items_per_run": 100,
+      "config_json": {"locale": "en-US", "min_engagement": 100, "hours_back": 6}
+    },
+    {
+      "region": "us", "key": "techcrunch_rss", "platform": "rss",
+      "surface_type": "rss_feed", "bucket": "news", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"feed_urls": ["https://techcrunch.com/feed/"], "locale": "en-US", "source_name": "techcrunch"}
+    },
+    {
+      "region": "us", "key": "arstechnica_rss", "platform": "rss",
+      "surface_type": "rss_feed", "bucket": "news", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"feed_urls": ["https://feeds.arstechnica.com/arstechnica/index"], "locale": "en-US", "source_name": "arstechnica"}
+    },
+    {
+      "region": "us", "key": "theverge_rss", "platform": "rss",
+      "surface_type": "rss_feed", "bucket": "news", "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true, "poll_interval_seconds": 1800, "max_items_per_run": 30,
+      "config_json": {"feed_urls": ["https://www.theverge.com/rss/index.xml"], "locale": "en-US", "source_name": "theverge"}
+    }
+  ],
+
+  "translation": {
+    "engine": "claude",
+    "fallback_order": ["claude"],
+    "canonical_locale": "en-US",
+    "target_locales": ["en", "zh-Hans"],
+    "source_langs": [],
+    "hot_percent": 10,
+    "batch_size": 10
+  },
+
+  "data_retention": {
+    "retention_days": 30
+  }
+}

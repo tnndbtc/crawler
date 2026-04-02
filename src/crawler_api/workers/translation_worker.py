@@ -713,7 +713,8 @@ async def run_worker_loop():
             # 3. Process display translations for each target locale
             # Read from SystemSettings (single source of truth)
             from shared.translation_selection import get_translation_settings
-            target_locales = (await sync_to_async(get_translation_settings))().get('target_locales', ['zh-Hans'])
+            settings = await sync_to_async(get_translation_settings)()
+            target_locales = settings.get('target_locales', ['zh-Hans'])
 
             processed_display = {}
             for locale in target_locales:

@@ -18,8 +18,6 @@ Selection Strategy:
 
 Settings (from SystemSettings model):
 - translation_hot_percent: Top X% to translate (default: 10)
-- translation_small_bucket_min: Min items for small buckets (default: 1)
-- translation_small_bucket_max: Max items for small buckets (default: 5)
 - translation_target_locales: Target locales (default: ['zh-Hans'])
 - translation_source_langs: Source languages (default: ['en', 'ja'])
 
@@ -50,8 +48,6 @@ def get_translation_settings() -> Dict[str, Any]:
         Dict with translation settings:
         {
             'hot_percent': 10,
-            'small_bucket_min': 1,
-            'small_bucket_max': 5,
             'target_locales': ['zh-Hans'],
             'source_langs': ['en', 'ja']
         }
@@ -65,57 +61,38 @@ def get_translation_settings() -> Dict[str, Any]:
 
     return {
         'hot_percent': SystemSettings.get_setting('translation_hot_percent', default=10),
-        'small_bucket_min': SystemSettings.get_setting('translation_small_bucket_min', default=1),
-        'small_bucket_max': SystemSettings.get_setting('translation_small_bucket_max', default=5),
         'target_locales': SystemSettings.get_setting('translation_target_locales', default=['zh-Hans']),
         'source_langs': SystemSettings.get_setting('translation_source_langs', default=['en', 'ja']),
     }
 
 
-def apply_small_bucket_logic(total_count: int, hot_percent: int, small_min: int, small_max: int) -> int:
+def calculate_translation_count(total_count: int, hot_percent: int) -> int:
     """
-    Apply small bucket logic for translation selection.
+    Calculate how many items to translate from a language group.
 
-    For small groups (<20 items), use fixed min/max instead of percentage.
+    Uses percentage (top X%), always at least 1 if items exist.
 
     Args:
         total_count: Total items in the language group
         hot_percent: Percentage to select (e.g., 10 for top 10%)
-        small_min: Minimum items to select for small buckets
-        small_max: Maximum items to select for small buckets
 
     Returns:
         Number of items to select
 
     Examples:
-        >>> apply_small_bucket_logic(5, 10, 1, 5)
-        1  # Small bucket: min 1
+        >>> calculate_translation_count(5, 10)
+        1  # 10% of 5 = 0.5 → at least 1
 
-        >>> apply_small_bucket_logic(15, 10, 1, 5)
-        1  # Small bucket: 10% of 15 = 1.5 → min 1
+        >>> calculate_translation_count(100, 10)
+        10  # 10% of 100 = 10
 
-        >>> apply_small_bucket_logic(100, 10, 1, 5)
-        10  # Normal: 10% of 100 = 10
-
-        >>> apply_small_bucket_logic(1000, 10, 1, 5)
-        100  # Normal: 10% of 1000 = 100
+        >>> calculate_translation_count(0, 10)
+        0  # Nothing to translate
     """
-    if total_count < 20:
-        # Small bucket: use min/max bounds
-        select_count = max(small_min, min(total_count, small_max))
-        logger.debug(
-            f"Small bucket logic: total={total_count}, "
-            f"select={select_count} (min={small_min}, max={small_max})"
-        )
-    else:
-        # Normal bucket: use percentage
-        select_count = max(1, int(total_count * hot_percent / 100.0))
-        logger.debug(
-            f"Normal bucket logic: total={total_count}, "
-            f"percent={hot_percent}% → select={select_count}"
-        )
+    if total_count == 0:
+        return 0
 
-    return select_count
+    return max(1, int(total_count * hot_percent / 100.0))
 
 
 def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
@@ -158,8 +135,6 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     # Get settings
     settings = get_translation_settings()
     hot_percent = settings['hot_percent']
-    small_min = settings['small_bucket_min']
-    small_max = settings['small_bucket_max']
     source_langs = settings['source_langs']
 
     # Get target language group for same-language skip logic
@@ -257,8 +232,8 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
         already_translated_count = already_translated.count()
 
         # Calculate TARGET count based on TOTAL items
-        target_count = apply_small_bucket_logic(
-            total_count, hot_percent, small_min, small_max
+        target_count = calculate_translation_count(
+            total_count, hot_percent
         )
 
         # Calculate how many MORE we need to translate

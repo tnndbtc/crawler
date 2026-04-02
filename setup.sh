@@ -269,137 +269,6 @@ check_requirements() {
 }
 
 ################################################################################
-# First-Time Setup
-################################################################################
-
-first_time_setup() {
-    print_header "First-Time Setup"
-
-    ensure_directories
-
-    # Step 1: Create .env file
-    print_step "Step 1/6: Setting up environment file..."
-    if [ ! -f "$ENV_FILE" ]; then
-        if [ -f "${SCRIPT_DIR}/.env.example" ]; then
-            cp "${SCRIPT_DIR}/.env.example" "$ENV_FILE"
-            print_success ".env file created from .env.example"
-            print_warning "Please edit .env and add your API keys:"
-            print_info "  - DJANGO_SECRET_KEY (generate a random string)"
-            print_info "  - DEEPL_API_KEY (from https://www.deepl.com/pro-api)"
-            print_info "  - OPENAI_API_KEY (from https://platform.openai.com/api-keys)"
-            echo ""
-            read -p "Press Enter after updating .env file..." -r
-        else
-            print_error ".env.example not found"
-            return 1
-        fi
-    else
-        print_info ".env file already exists (skipping)"
-    fi
-
-    # Step 2: Install dependencies
-    print_step "Step 2/6: Installing Python dependencies..."
-    if [ -f "${SCRIPT_DIR}/requirements.txt" ]; then
-        pip install -r "${SCRIPT_DIR}/requirements.txt"
-        print_success "Dependencies installed"
-    else
-        print_error "requirements.txt not found"
-        return 1
-    fi
-
-    # Step 3: Run migrations
-    print_step "Step 3/6: Running database migrations..."
-    cd "$SCRIPT_DIR"
-    python3 manage.py migrate
-    print_success "Database migrations complete"
-
-    # Step 4: Load initial data and seed all collectors
-    print_step "Step 4/6: Loading initial data & seeding all collectors..."
-    if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
-        python3 manage.py loaddata initial_data
-        print_success "Base data loaded (regions & core surfaces)"
-    else
-        print_warning "initial_data.json not found (skipping)"
-    fi
-
-    # Seed migrated collectors (bbc, reuters, ap, guardian, aljazeera, etc.)
-    print_info "Seeding migrated collectors..."
-    python3 manage.py setup_migrated_collectors 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-    print_success "Migrated collectors seeded"
-
-    # Seed generic RSS sources (techcrunch, arstechnica, theverge)
-    print_info "Seeding RSS sources..."
-    python3 manage.py setup_rss_sources 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-    print_success "RSS sources seeded"
-
-    # Seed translation system settings
-    print_info "Seeding translation settings..."
-    python3 manage.py shell << 'SETTINGS_EOF'
-from crawler_admin.models import SystemSettings
-from translation.models import TranslationConfig
-
-# Seed SystemSettings
-settings = {
-    'translation_hot_percent': (10, 'integer', 'Top X% hottest items to translate per language group'),
-    'translation_small_bucket_min': (1, 'integer', 'Minimum items to translate for small buckets'),
-    'translation_small_bucket_max': (5, 'integer', 'Maximum items to translate for small buckets'),
-    'translation_target_locales': (['en', 'zh-Hans'], 'json', 'Target locales for display translation'),
-    'translation_source_langs': ([], 'json', 'Source languages (empty=ALL)'),
-}
-
-for key, (value, vtype, desc) in settings.items():
-    obj, created = SystemSettings.objects.get_or_create(
-        key=key,
-        defaults={'value_json': value, 'value_type': vtype, 'description': desc, 'updated_by': 'setup'}
-    )
-    status = 'Created' if created else 'Already exists'
-    print(f'  {status}: {key} = {value}')
-
-# Fix TranslationConfig enabled_locales to match target_locales
-config = TranslationConfig.get_config()
-if config.enabled_locales != ['en', 'zh-Hans']:
-    config.enabled_locales = ['en', 'zh-Hans']
-    config.canonical_engine = 'claude'
-    config.display_engine = 'claude'
-    config.fallback_order = ['claude']
-    config.save()
-    print('  Updated: TranslationConfig.enabled_locales = [en, zh-Hans]')
-else:
-    print('  Already correct: TranslationConfig.enabled_locales')
-SETTINGS_EOF
-    print_success "Translation settings seeded"
-
-    # Step 5: Create superuser (skip if one already exists)
-    print_step "Step 5/6: Checking Django admin superuser..."
-    local has_superuser=$(python3 manage.py shell -c "
-from django.contrib.auth.models import User
-print('yes' if User.objects.filter(is_superuser=True).exists() else 'no')
-" 2>&1 | grep -E "^(yes|no)$")
-
-    if [ "$has_superuser" = "yes" ]; then
-        print_success "Superuser already exists (skipping)"
-    else
-        print_info "You'll be prompted to create an admin account"
-        python3 manage.py createsuperuser
-        print_success "Superuser created"
-    fi
-
-    # Step 6: Verify setup
-    print_step "Step 6/6: Verifying setup..."
-    if [ -f "$DB_FILE" ]; then
-        print_success "Database created successfully"
-    else
-        print_error "Database file not found"
-        return 1
-    fi
-
-    echo ""
-    print_success "Setup complete! You can now start the services."
-    print_info "Use option 2 to start all services, or option 1 for quick start"
-    echo ""
-}
-
-################################################################################
 # Service Management
 ################################################################################
 
@@ -524,6 +393,13 @@ start_all_services() {
 
     ensure_directories
 
+    # Auto-install dependencies
+    if [ -f "${SCRIPT_DIR}/requirements.txt" ]; then
+        print_step "Checking dependencies..."
+        pip install -q -r "${SCRIPT_DIR}/requirements.txt" 2>&1 | grep -v "already satisfied" | head -5
+        print_success "Dependencies OK"
+    fi
+
     # Auto-create .env from .env.example if it doesn't exist
     # This is safe because critical values (API keys) come from environment variables
     if [ ! -f "$ENV_FILE" ]; then
@@ -547,14 +423,20 @@ start_all_services() {
             return 1
         fi
         print_success "Database created"
-
-        # Load initial data if available
-        if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
-            print_step "Loading initial data..."
-            python3 manage.py loaddata initial_data 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-            print_success "Initial data loaded"
-        fi
     fi
+
+    # Auto-seed from config/seeds.json (idempotent — safe to run every start)
+    print_step "Loading seeds from config/seeds.json..."
+    cd "$SCRIPT_DIR"
+    python3 -c "
+import os, sys, django
+sys.path.insert(0, 'src')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+django.setup()
+from shared.seed_loader import load_seeds
+load_seeds()
+" 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "Seeds loaded"
 
     # Check ports
     if is_port_in_use $DJANGO_PORT; then
@@ -658,8 +540,26 @@ stop_all_services() {
 restart_all_services() {
     print_header "Restarting All Services"
     stop_all_services
+    echo ""
     sleep 2
     start_all_services
+}
+
+start_or_restart_services() {
+    # If anything is running, restart. Otherwise just start.
+    local any_running=false
+    for svc in django_admin api_server surface_worker translation_worker hotness_worker; do
+        if is_service_running "$svc"; then
+            any_running=true
+            break
+        fi
+    done
+
+    if [ "$any_running" = true ]; then
+        restart_all_services
+    else
+        start_all_services
+    fi
 }
 
 show_service_status() {
@@ -1216,55 +1116,17 @@ reset_database() {
     python3 manage.py migrate
     print_success "Database recreated"
 
-    # Load initial data and seed all collectors
-    print_step "Loading initial data & seeding all collectors..."
-    if [ -f "${SCRIPT_DIR}/src/crawler_admin/fixtures/initial_data.json" ]; then
-        python3 manage.py loaddata initial_data
-        print_success "Base data loaded (regions & core surfaces)"
-    fi
-
-    python3 manage.py setup_migrated_collectors 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-    print_success "Migrated collectors seeded"
-
-    python3 manage.py setup_rss_sources 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-    print_success "RSS sources seeded"
-
-    # Seed translation settings
-    print_info "Seeding translation settings..."
-    python3 manage.py shell << 'SETTINGS_EOF'
-from crawler_admin.models import SystemSettings
-from translation.models import TranslationConfig
-
-# Seed SystemSettings
-settings = {
-    'translation_hot_percent': (10, 'integer', 'Top X% hottest items to translate per language group'),
-    'translation_small_bucket_min': (1, 'integer', 'Minimum items to translate for small buckets'),
-    'translation_small_bucket_max': (5, 'integer', 'Maximum items to translate for small buckets'),
-    'translation_target_locales': (['en', 'zh-Hans'], 'json', 'Target locales for display translation'),
-    'translation_source_langs': ([], 'json', 'Source languages (empty=ALL)'),
-}
-
-for key, (value, vtype, desc) in settings.items():
-    obj, created = SystemSettings.objects.get_or_create(
-        key=key,
-        defaults={'value_json': value, 'value_type': vtype, 'description': desc, 'updated_by': 'setup'}
-    )
-    status = 'Created' if created else 'Already exists'
-    print(f'  {status}: {key} = {value}')
-
-# Fix TranslationConfig enabled_locales to match target_locales
-config = TranslationConfig.get_config()
-if config.enabled_locales != ['en', 'zh-Hans']:
-    config.enabled_locales = ['en', 'zh-Hans']
-    config.canonical_engine = 'claude'
-    config.display_engine = 'claude'
-    config.fallback_order = ['claude']
-    config.save()
-    print('  Updated: TranslationConfig.enabled_locales = [en, zh-Hans]')
-else:
-    print('  Already correct: TranslationConfig.enabled_locales')
-SETTINGS_EOF
-    print_success "Translation settings seeded"
+    # Load seeds from config/seeds.json
+    print_step "Loading seeds from config/seeds.json..."
+    python3 -c "
+import os, sys, django
+sys.path.insert(0, 'src')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+django.setup()
+from shared.seed_loader import load_seeds
+load_seeds()
+" 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+    print_success "Seeds loaded"
 
     # Create superuser
     print_step "Creating admin user..."
@@ -1688,106 +1550,6 @@ else:
     echo ""
 }
 
-################################################################################
-# Quick Start
-################################################################################
-
-quick_start() {
-    print_header "Quick Start - Complete Setup & Launch"
-
-    print_info "This will perform complete setup and start all services"
-    echo ""
-    confirm_action "Continue with quick start?" || return 1
-
-    # Check if already set up
-    if [ -f "$ENV_FILE" ] && [ -f "$DB_FILE" ]; then
-        print_info "System appears to be already set up"
-        read -p "Skip setup and just start services? (Y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-            start_all_services
-            show_urls
-            return 0
-        fi
-    fi
-
-    # Run first-time setup
-    first_time_setup
-
-    if [ $? -eq 0 ]; then
-        echo ""
-        print_step "Setup complete! Starting services..."
-        sleep 2
-        start_all_services
-        show_urls
-    else
-        print_error "Setup failed. Please check errors above."
-    fi
-}
-
-################################################################################
-# Setup Migrated Collectors
-################################################################################
-
-setup_migrated_collectors() {
-    print_header "Setup Migrated Collectors"
-
-    # Check if database exists
-    if [ ! -f "$DB_FILE" ]; then
-        print_error "Database not found"
-        print_info "Run option 9 (First-Time Setup) first"
-        return 1
-    fi
-
-    echo ""
-    print_info "This will automatically configure 15 new collector sources:"
-    echo ""
-    echo "  News Sources (11):"
-    echo "    • BBC, Google News, Reuters, AP, Guardian, Al Jazeera"
-    echo "    • Wenxuecity (文学城), Billboard, Variety, IGN, Polygon"
-    echo ""
-    echo "  Social Media (4):"
-    echo "    • Hacker News, Google Trends"
-    echo "    • YouTube (enhanced), Twitter (placeholder)"
-    echo ""
-    print_warning "This is idempotent - safe to run multiple times"
-    echo ""
-
-    confirm_action "Continue with collector setup?" || return 1
-
-    echo ""
-    print_step "Running setup command..."
-    echo ""
-
-    cd "$SCRIPT_DIR"
-
-    # Run the Django management command
-    python3 manage.py setup_migrated_collectors
-
-    local exit_code=$?
-
-    if [ $exit_code -eq 0 ]; then
-        echo ""
-        print_success "Collectors configured successfully!"
-        echo ""
-
-        # Ask about restarting services
-        print_info "Services should be restarted to load new collectors"
-        read -p "Restart services now? (Y/n): " -n 1 -r
-        echo
-
-        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-            restart_all_services
-        else
-            print_info "Remember to restart services later: ./setup.sh restart"
-        fi
-    else
-        print_error "Setup failed. Check errors above."
-        return 1
-    fi
-
-    echo ""
-}
 
 ################################################################################
 # Main Menu
@@ -1805,40 +1567,33 @@ show_menu() {
 EOF
     echo -e "${NC}"
 
-    echo -e "${BOLD}Quick Actions:${NC}"
-    echo "  1)  Quick Start (setup + start all)"
-    echo "  2)  Start All Services"
-    echo "  3)  Stop All Services"
-    echo "  4)  Restart All Services"
-    echo "  5)  Show Service Status"
-    echo "  6)  Force Collection Run (All Surfaces)"
+    echo -e "${BOLD}Services:${NC}"
+    echo "  1)  Start / Restart All Services"
+    echo "  2)  Stop All Services"
+    echo "  3)  Show Service Status"
+    echo "  4)  Force Collection Run (All Surfaces)"
     echo ""
 
     echo -e "${BOLD}Information & Monitoring:${NC}"
-    echo "  7)  Show Access URLs"
-    echo "  8)  View Logs (interactive)"
-    echo "  9)  How It Works - Crawler Explanation"
+    echo "  5)  Show Access URLs"
+    echo "  6)  View Logs (interactive)"
+    echo "  7)  How It Works - Crawler Explanation"
     echo ""
 
-    echo -e "${BOLD}Setup & Maintenance:${NC}"
-    echo "  10) First-Time Setup"
-    echo "  11) Check System Requirements"
-    echo "  12) Update Dependencies"
+    echo -e "${BOLD}Maintenance:${NC}"
+    echo "  8)  Check System Requirements"
+    echo "  9)  Update Dependencies"
+    echo "  10) Run Migrations"
     echo ""
 
-    echo -e "${BOLD}Database Operations:${NC}"
-    echo "  13) Backup Database"
-    echo "  14) Restore Database"
-    echo "  15) Run Migrations"
-    echo "  16) Reset Database (destructive!)"
+    echo -e "${BOLD}Database:${NC}"
+    echo "  11) Backup Database"
+    echo "  12) Restore Database"
+    echo "  13) Reset Database (destructive!)"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
-    echo "  17) Run Tests"
-    echo ""
-
-    echo -e "${BOLD}Migration:${NC}"
-    echo "  18) Setup Migrated Collectors (15 new sources)"
+    echo "  14) Run Tests"
     echo ""
 
     echo "  0)  Exit"
@@ -1852,24 +1607,20 @@ main_loop() {
         read -p "Select option: " choice
 
         case $choice in
-            1) quick_start ;;
-            2) start_all_services ;;
-            3) stop_all_services ;;
-            4) restart_all_services ;;
-            5) show_service_status ;;
-            6) force_collection_run ;;
-            7) show_urls ;;
-            8) view_logs ;;
-            9) show_how_it_works ;;
-            10) first_time_setup ;;
-            11) check_requirements ;;
-            12) update_dependencies ;;
-            13) backup_database ;;
-            14) restore_database ;;
-            15) run_migrations ;;
-            16) reset_database ;;
-            17) test_menu ;;
-            18) setup_migrated_collectors ;;
+            1) start_or_restart_services ;;
+            2) stop_all_services ;;
+            3) show_service_status ;;
+            4) force_collection_run ;;
+            5) show_urls ;;
+            6) view_logs ;;
+            7) show_how_it_works ;;
+            8) check_requirements ;;
+            9) update_dependencies ;;
+            10) run_migrations ;;
+            11) backup_database ;;
+            12) restore_database ;;
+            13) reset_database ;;
+            14) test_menu ;;
             0)
                 echo ""
                 print_info "Exiting..."
@@ -1903,14 +1654,11 @@ fi
 # Handle command-line arguments for automation
 if [ $# -gt 0 ]; then
     case "$1" in
-        start)
-            start_all_services
+        start|setup|restart)
+            start_or_restart_services
             ;;
         stop)
             stop_all_services
-            ;;
-        restart)
-            restart_all_services
             ;;
         status)
             show_service_status
@@ -1918,23 +1666,17 @@ if [ $# -gt 0 ]; then
         urls)
             show_urls
             ;;
-        setup)
-            first_time_setup
-            ;;
         backup)
             backup_database
             ;;
-        migrate-db)
+        migrate-db|migrate)
             run_migrations
-            ;;
-        migrate)
-            setup_migrated_collectors
             ;;
         info|how-it-works)
             show_how_it_works
             ;;
         *)
-            echo "Usage: $0 [start|stop|restart|status|urls|setup|backup|migrate-db|migrate|info]"
+            echo "Usage: $0 [start|stop|restart|status|urls|backup|migrate|info]"
             echo "Or run without arguments for interactive menu"
             exit 1
             ;;
