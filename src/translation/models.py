@@ -11,6 +11,56 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+# ---------------------------------------------------------------------------
+# Default prompt templates (used as field defaults in TranslationConfig).
+#
+# Available variables:
+#   Single-text prompts : {source_locale}, {target_locale}, {platform}, {text}
+#   Batch prompts       : {source_locale}, {target_locale}, {platform}, {title}, {description}
+# ---------------------------------------------------------------------------
+
+CANONICAL_PROMPT_DEFAULT = (
+    "You are a professional translator producing machine-readable canonical text.\n"
+    "Translate the following text from {source_locale} to normalized English (en-US).\n"
+    "Source platform: {platform}\n"
+    "Produce a stable, literal, machine-consistent English meaning.\n"
+    "Return ONLY the translated text, no explanations.\n\n"
+    "{text}"
+)
+
+DISPLAY_PROMPT_DEFAULT = (
+    "You are a professional news translator with expertise in {platform} content.\n"
+    "Translate the following text from {source_locale} to {target_locale}.\n"
+    "Translate naturally while preserving tone and cultural nuances.\n"
+    "Return ONLY the translated text, no explanations.\n\n"
+    "{text}"
+)
+
+CANONICAL_BATCH_PROMPT_DEFAULT = (
+    "You are a professional translator producing machine-readable canonical text.\n"
+    "Translate the following from {source_locale} to normalized English (en-US).\n"
+    "Source platform: {platform}\n\n"
+    "Instructions:\n"
+    "- Title: Translate literally and concisely, preserving the key meaning.\n"
+    "- Description: Translate the full meaning accurately and consistently.\n\n"
+    "Return JSON only, no markdown fences, no explanations:\n"
+    '{"title": "translated title here", "description": "translated description here"}\n\n'
+    "Title: {title}\n"
+    "Description: {description}"
+)
+
+DISPLAY_BATCH_PROMPT_DEFAULT = (
+    "You are a professional news translator with expertise in {platform} content.\n"
+    "Translate the following from {source_locale} to {target_locale}.\n\n"
+    "Instructions:\n"
+    "- Title: Keep it punchy and engaging, matching the original tone.\n"
+    "- Description: Translate naturally, preserving cultural nuances and context.\n\n"
+    "Return JSON only, no markdown fences, no explanations:\n"
+    '{"title": "translated title here", "description": "translated description here"}\n\n'
+    "Title: {title}\n"
+    "Description: {description}"
+)
+
 
 class TranslationConfig(models.Model):
     """
@@ -93,6 +143,36 @@ class TranslationConfig(models.Model):
     batch_size = models.IntegerField(
         default=10,
         help_text="Number of items to process per worker cycle"
+    )
+
+    # Prompt templates (editable in Django admin)
+    canonical_prompt = models.TextField(
+        default=CANONICAL_PROMPT_DEFAULT,
+        help_text=(
+            "Prompt for canonical (en-US) single-text translation. "
+            "Variables: {source_locale}, {target_locale}, {platform}, {text}"
+        )
+    )
+    display_prompt = models.TextField(
+        default=DISPLAY_PROMPT_DEFAULT,
+        help_text=(
+            "Prompt for display single-text translation. "
+            "Variables: {source_locale}, {target_locale}, {platform}, {text}"
+        )
+    )
+    canonical_batch_prompt = models.TextField(
+        default=CANONICAL_BATCH_PROMPT_DEFAULT,
+        help_text=(
+            "Prompt for canonical (en-US) batch translation (title + description). "
+            "Variables: {source_locale}, {target_locale}, {platform}, {title}, {description}"
+        )
+    )
+    display_batch_prompt = models.TextField(
+        default=DISPLAY_BATCH_PROMPT_DEFAULT,
+        help_text=(
+            "Prompt for display batch translation (title + description). "
+            "Variables: {source_locale}, {target_locale}, {platform}, {title}, {description}"
+        )
     )
 
     # Timestamps

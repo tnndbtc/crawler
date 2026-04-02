@@ -26,6 +26,32 @@ logger = logging.getLogger(__name__)
 CLAUDE_CLI_TIMEOUT = 60
 
 
+def _render_prompt(template: str, **kwargs) -> str:
+    """
+    Substitute {variable} placeholders in a prompt template.
+
+    Uses simple string replacement (not Python .format()) so that
+    literal curly braces in JSON examples are left untouched as long
+    as they do not match any variable name.
+    """
+    result = template
+    for key, value in kwargs.items():
+        result = result.replace(f'{{{key}}}', str(value) if value is not None else '')
+    return result
+
+
+def _get_config_sync():
+    """Synchronous DB fetch of TranslationConfig singleton."""
+    from translation.models import TranslationConfig
+    return TranslationConfig.get_config()
+
+
+async def _get_config():
+    """Async-safe wrapper: fetch TranslationConfig from an async context."""
+    from asgiref.sync import sync_to_async
+    return await sync_to_async(_get_config_sync)()
+
+
 @register_engine('claude')
 class ClaudeEngine(BaseTranslationEngine):
     """
@@ -82,18 +108,21 @@ class ClaudeEngine(BaseTranslationEngine):
         if not text or not text.strip():
             return text
 
+        config = await _get_config()
+        platform = (context or {}).get('source_platform', 'unknown')
+
         if translation_type == 'canonical':
-            prompt = (
-                f"Translate the following text from {source_locale} to normalized English (en-US). "
-                f"Produce a stable, literal, machine-consistent English meaning. "
-                f"Return ONLY the translated text, no explanations.\n\n{text}"
-            )
+            template = config.canonical_prompt
         else:
-            prompt = (
-                f"Translate the following text from {source_locale} to {target_locale}. "
-                f"Translate naturally while preserving tone and cultural nuances. "
-                f"Return ONLY the translated text, no explanations.\n\n{text}"
-            )
+            template = config.display_prompt
+
+        prompt = _render_prompt(
+            template,
+            source_locale=source_locale,
+            target_locale=target_locale,
+            platform=platform,
+            text=text,
+        )
 
         return await self._run_claude_cli(prompt)
 
@@ -122,7 +151,7 @@ class ClaudeEngine(BaseTranslationEngine):
         # Batch mode: translate both in one call
         try:
             result = await self._translate_batch(
-                title, description, source_locale, target_locale, translation_type
+                title, description, source_locale, target_locale, translation_type, context
             )
             if result is not None:
                 return result
@@ -141,7 +170,8 @@ class ClaudeEngine(BaseTranslationEngine):
         description: str,
         source_locale: str,
         target_locale: str,
-        translation_type: str
+        translation_type: str,
+        context: Optional[Dict[str, Any]] = None
     ) -> Optional[TranslationResult]:
         """
         Attempt batch translation of title + description via single CLI call.
@@ -149,24 +179,22 @@ class ClaudeEngine(BaseTranslationEngine):
         Returns TranslationResult on success, None if JSON parsing fails.
         Raises translation exceptions (AuthenticationError, etc.) on CLI errors.
         """
+        config = await _get_config()
+        platform = (context or {}).get('source_platform', 'unknown')
+
         if translation_type == 'canonical':
-            prompt = (
-                f"Translate the following from {source_locale} to normalized English (en-US). "
-                f"Produce stable, literal, machine-consistent English meaning. "
-                f"Return JSON only, no markdown fences, no explanations:\n"
-                f'{{"title": "translated title here", "description": "translated description here"}}\n\n'
-                f"Title: {title}\n"
-                f"Description: {description}"
-            )
+            template = config.canonical_batch_prompt
         else:
-            prompt = (
-                f"Translate the following from {source_locale} to {target_locale}. "
-                f"Translate naturally while preserving tone and cultural nuances. "
-                f"Return JSON only, no markdown fences, no explanations:\n"
-                f'{{"title": "translated title here", "description": "translated description here"}}\n\n'
-                f"Title: {title}\n"
-                f"Description: {description}"
-            )
+            template = config.display_batch_prompt
+
+        prompt = _render_prompt(
+            template,
+            source_locale=source_locale,
+            target_locale=target_locale,
+            platform=platform,
+            title=title,
+            description=description,
+        )
 
         raw = await self._run_claude_cli(prompt)
 

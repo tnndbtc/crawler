@@ -60,6 +60,23 @@ class TranslationConfigAdmin(admin.ModelAdmin):
         ('Rate Limiting', {
             'fields': ('batch_size',),
         }),
+        ('Translation Prompts — Single Text', {
+            'fields': ('canonical_prompt', 'display_prompt'),
+            'classes': ('collapse',),
+            'description': (
+                'Prompts used when translating a title-only item (no description). '
+                'Available variables: {source_locale}, {target_locale}, {platform}, {text}'
+            ),
+        }),
+        ('Translation Prompts — Batch (Title + Description)', {
+            'fields': ('canonical_batch_prompt', 'display_batch_prompt'),
+            'classes': ('collapse',),
+            'description': (
+                'Prompts used when translating both title and description in one call. '
+                'Must instruct Claude to return JSON: {"title": "...", "description": "..."}. '
+                'Available variables: {source_locale}, {target_locale}, {platform}, {title}, {description}'
+            ),
+        }),
     )
 
     readonly_fields = ['canonical_locale']
