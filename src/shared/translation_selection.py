@@ -59,11 +59,40 @@ def get_translation_settings() -> Dict[str, Any]:
     # Import here to avoid circular dependency
     from crawler_admin.models import SystemSettings
 
+    global_pct = SystemSettings.get_setting('translation_hot_percent', default=10)
+    # Explicit list of all supported lang_groups — matches the 15 locales in the plan.
+    # Add new entries here when new locales are added.
+    KNOWN_LANG_GROUPS = ['zh', 'ja', 'ko', 'en', 'es', 'pt', 'fr', 'de',
+                         'ar', 'hi', 'id', 'ru', 'tr', 'it', 'pl']
+    locale_pcts = {}
+    for lang in KNOWN_LANG_GROUPS:
+        key = f'translation_hot_percent_{lang}'
+        locale_pcts[lang] = SystemSettings.get_setting(key, default=global_pct)
+
     return {
-        'hot_percent': SystemSettings.get_setting('translation_hot_percent', default=10),
+        'hot_percent': global_pct,           # backward compat — global fallback
+        'hot_percent_by_locale': locale_pcts, # per-locale percentages
         'target_locales': SystemSettings.get_setting('translation_target_locales', default=['zh-Hans']),
         'source_langs': SystemSettings.get_setting('translation_source_langs', default=['en', 'ja']),
     }
+
+
+def get_hot_percent_for_locale(target_locale: str, settings: Dict[str, Any]) -> int:
+    """
+    Get the hot_percent to use for a specific target locale.
+
+    Looks up per-locale setting first, falls back to global.
+
+    Args:
+        target_locale: Target locale (e.g. 'zh-Hans', 'en-US', 'pt-BR')
+        settings: Dict returned by get_translation_settings()
+
+    Returns:
+        Integer percentage (e.g. 25 for 25%)
+    """
+    lang = locale_to_lang_group(target_locale)  # 'zh-Hans' → 'zh', 'pt-BR' → 'pt'
+    by_locale = settings.get('hot_percent_by_locale', {})
+    return by_locale.get(lang, settings.get('hot_percent', 10))
 
 
 def calculate_translation_count(total_count: int, hot_percent: int) -> int:
@@ -134,7 +163,7 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
     # Get settings
     settings = get_translation_settings()
-    hot_percent = settings['hot_percent']
+    hot_percent = get_hot_percent_for_locale(target_locale, settings)
     source_langs = settings['source_langs']
 
     # Get target language group for same-language skip logic

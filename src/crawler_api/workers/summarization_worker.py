@@ -72,28 +72,20 @@ PROMPT_YOUTUBE = """You are summarizing a YouTube video for a trending feed.
 Language: {source_locale}
 Title: {title}
 Description: {content}
-Engagement: {engagement}
 Top viewer comments:
 {top_comments}
 
-Write exactly 2 lines:
-Line 1: 1-2 sentences in the same language as the original content ({source_locale}) summarizing what this video is about and what viewers are saying.
-Line 2: Format engagement naturally, e.g. "🎬 4.2M views · 98K 👍 · 3.2K 💬"
-Output only these 2 lines, nothing else."""
+Write 1-2 sentences in the same language as the original content ({source_locale}) summarizing what this video is about and what viewers are saying. Output only the summary, nothing else."""
 
 PROMPT_SIGNALS_ONLY = """You are writing a short description for a trending item that has no article body.
 
 Platform: {platform}
 Language: {source_locale}
 Title: {title}
-Engagement: {engagement}
 Top comments from the community:
 {top_comments}
 
-Write exactly 2 lines:
-Line 1: 1-2 sentences in the same language as the original content ({source_locale}) capturing what this is about and the key reaction from the community (based on comments above — do not invent facts).
-Line 2: Format engagement signals naturally using emoji, e.g. "🔥 1.2K pts · 340 💬" or "📈 Trending #3 — 500K searches"
-Output only these 2 lines, nothing else."""
+Write 1-2 sentences in the same language as the original content ({source_locale}) capturing what this is about and the key reaction from the community (based on comments above — do not invent facts). Output only the summary, nothing else."""
 
 
 # ---------------------------------------------------------------------------
@@ -203,12 +195,12 @@ def _build_prompt(item: TrendItem, strategy: str) -> str:
     if strategy == 'youtube':
         return PROMPT_YOUTUBE.format(
             source_locale=source_locale, title=title, content=content,
-            engagement=engagement, top_comments=top_comments
+            top_comments=top_comments
         )
     if strategy == 'signals_only':
         return PROMPT_SIGNALS_ONLY.format(
             platform=platform, source_locale=source_locale, title=title,
-            engagement=engagement, top_comments=top_comments
+            top_comments=top_comments
         )
     raise ValueError(f"Unknown strategy: {strategy}")
 
@@ -285,6 +277,13 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> int:
         try:
             prompt = _build_prompt(item, strategy)
             summary = await _run_claude(prompt)
+
+            # For youtube and signals_only: append Python-formatted engagement
+            # line as Line 2. This replaces the LLM doing the formatting.
+            if strategy in ('youtube', 'signals_only'):
+                eng_line = _format_engagement(item.engagement_signals or {})
+                if eng_line:
+                    summary = f"{summary}\n{eng_line}"
 
             item.description_original = summary
             item.summary_status = 'complete'

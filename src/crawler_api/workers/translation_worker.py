@@ -757,17 +757,24 @@ async def run_worker_loop():
             # 0. Retry failed translations periodically (rate limit recovery)
             await retry_failed_translations(batch_size)
 
-            # 1. Mark English items as skipped
-            skipped_english = await mark_english_items_as_skipped(batch_size)
-
-            # 2. Process canonical translations
-            processed_canonical = await process_canonical_translations(manager, batch_size)
-
-            # 3. Process display translations for each target locale
-            # Read from SystemSettings (single source of truth)
+            # Read target_locales first — used to gate both canonical and display translation
             from shared.translation_selection import get_translation_settings
             settings = await sync_to_async(get_translation_settings)()
             target_locales = settings.get('target_locales', ['zh-Hans'])
+
+            # 1. Mark English items as skipped
+            skipped_english = await mark_english_items_as_skipped(batch_size)
+
+            # 2. Process canonical translations (en-US) only if 'en' is in target_locales.
+            # Remove 'en' from translation_target_locales in SystemSettings to pause
+            # canonical translation without affecting zh-Hans or other display translations.
+            if 'en' in target_locales:
+                processed_canonical = await process_canonical_translations(manager, batch_size)
+            else:
+                processed_canonical = 0
+                logger.debug("Canonical translation skipped: 'en' not in target_locales")
+
+            # 3. Process display translations for each target locale
 
             processed_display = {}
             for locale in target_locales:
