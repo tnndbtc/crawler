@@ -1569,6 +1569,66 @@ else:
 # Main Menu
 ################################################################################
 
+show_pipeline_queue_status() {
+    print_header "Pipeline Queue Status"
+
+    python3 manage.py shell -c "
+from crawler_admin.models import TrendItem, ItemDerivation
+from django.db.models import Count, Exists, OuterRef
+
+LOCALES = ['en','zh','ja','ko','ru','pt','de','es','fr','ar','hi','id','tr','it','pl']
+
+# Summarization queue per locale
+print('--- Summarization Queue ---')
+print(f'  {\"Locale\":<8} {\"Queued\":>8} {\"Complete\":>10} {\"Pending\":>9} {\"Total\":>8}')
+print('  ' + '-'*47)
+total_q = total_c = total_p = total_t = 0
+for lg in LOCALES:
+    q = TrendItem.objects.filter(lang_group=lg, summary_status='queued').count()
+    c = TrendItem.objects.filter(lang_group=lg, summary_status='complete').count()
+    p = TrendItem.objects.filter(lang_group=lg, summary_status='pending').count()
+    t = TrendItem.objects.filter(lang_group=lg).count()
+    if t == 0:
+        continue
+    print(f'  {lg:<8} {q:>8} {c:>10} {p:>9} {t:>8}')
+    total_q += q; total_c += c; total_p += p; total_t += t
+print('  ' + '-'*47)
+print(f'  {\"TOTAL\":<8} {total_q:>8} {total_c:>10} {total_p:>9} {total_t:>8}')
+
+# Translation queue per locale
+print()
+print('--- Translation Queue (ready to translate to zh-Hans) ---')
+has_translation = ItemDerivation.objects.filter(
+    item_id=OuterRef('id'),
+    derivation_type='translation',
+    target_locale='zh-Hans',
+    status='complete'
+)
+print(f'  {\"Locale\":<8} {\"Summarized\":>12} {\"Done\":>8}')
+print('  ' + '-'*32)
+total_r = total_d = 0
+for lg in LOCALES:
+    if lg == 'zh':
+        continue
+    ready = TrendItem.objects.filter(
+        lang_group=lg,
+        summary_status__in=['complete','skipped']
+    ).exclude(Exists(has_translation)).count()
+    done = ItemDerivation.objects.filter(
+        item__lang_group=lg,
+        derivation_type='translation',
+        target_locale='zh-Hans',
+        status='complete'
+    ).count()
+    if ready == 0 and done == 0:
+        continue
+    print(f'  {lg:<8} {ready:>12} {done:>8}')
+    total_r += ready; total_d += done
+print('  ' + '-'*32)
+print(f'  {\"TOTAL\":<8} {total_r:>12} {total_d:>8}')
+"
+}
+
 show_menu() {
     clear
     echo -e "${BOLD}${CYAN}"
@@ -1591,7 +1651,7 @@ EOF
     echo -e "${BOLD}Information & Monitoring:${NC}"
     echo "  5)  Show Access URLs"
     echo "  6)  View Logs (interactive)"
-    echo "  7)  How It Works - Crawler Explanation"
+    echo "  7)  Pipeline Queue Status (summarize / translate)"
     echo ""
 
     echo -e "${BOLD}Maintenance:${NC}"
@@ -1627,7 +1687,7 @@ main_loop() {
             4) force_collection_run ;;
             5) show_urls ;;
             6) view_logs ;;
-            7) show_how_it_works ;;
+            7) show_pipeline_queue_status ;;
             8) check_requirements ;;
             9) update_dependencies ;;
             10) run_migrations ;;
@@ -1686,8 +1746,8 @@ if [ $# -gt 0 ]; then
         migrate-db|migrate)
             run_migrations
             ;;
-        info|how-it-works)
-            show_how_it_works
+        queue|pipeline)
+            show_pipeline_queue_status
             ;;
         *)
             echo "Usage: $0 [start|stop|restart|status|urls|backup|migrate|info]"

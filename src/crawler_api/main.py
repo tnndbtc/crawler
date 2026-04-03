@@ -246,14 +246,21 @@ def _has_complete_translation(item, locale: str) -> bool:
     Helper function for filtering items by translation status.
     Used by chunk-based scanning for zh-Hans requests (from /tmp/t4).
 
-    Checks both new TrendItem fields and legacy TrendItemTranslation table.
+    Checks ItemDerivation table, new TrendItem inline fields, and legacy translations.
     """
-    # Check new TrendItem display fields first
+    # 1. Check ItemDerivation table (new selective translation approach)
+    for deriv in item.derivations.all():
+        if (deriv.derivation_type == 'translation' and
+                deriv.target_locale == locale and
+                deriv.status == 'complete'):
+            return True
+
+    # 2. Check new TrendItem display fields
     if locale == 'zh-Hans':
         if item.display_status_zh_hans in ('complete', 'skipped') and item.display_title_zh_hans:
             return True
 
-    # Fallback to legacy translations table
+    # 3. Fallback to legacy translations table
     for trans in item.translations.all():
         if trans.locale == locale and trans.status == 'complete':
             return True
@@ -405,6 +412,11 @@ async def list_trends(
     # LANGUAGE-AWARE: Filter by language group (e.g., 'en', 'zh', 'ja')
     if lang_group:
         queryset = queryset.filter(lang_group=lang_group)
+
+    # Only show items that have been summarized — pending items are not ready for display
+    queryset = queryset.filter(
+        summary_status__in=['complete', 'skipped']
+    )
 
     # Exclude items where canonical translation failed (untranslatable to frontend)
     # English-origin items (skipped) are always included — they don't need translation

@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -40,8 +41,11 @@ from crawler_admin.models import TrendItem
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.getenv('SUMMARIZATION_WORKER_POLL_INTERVAL', '60'))
-CLAUDE_TIMEOUT = 90  # seconds per call — summaries take longer than translations
-BATCH_SIZE = 5
+CLAUDE_TIMEOUT_SINGLE = 90    # seconds — per-item fallback calls
+CLAUDE_TIMEOUT_BATCH  = 240   # seconds — 10-item batch call
+BATCH_SIZE = 10
+CONTENT_MAX_CHARS  = 800      # truncate article content before sending to Claude
+COMMENTS_MAX_CHARS = 400      # truncate comments before sending to Claude
 FAILED_RETRY_INTERVAL = 3600  # 1 hour
 
 _last_failed_retry_time: float = 0
@@ -50,43 +54,37 @@ _last_failed_retry_time: float = 0
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-PROMPT_NEWS_ARTICLE = """You are summarizing a news article for a trending news feed.
+# Compressed single-item prompts — used only in per-item fallback calls.
+# The primary path is the 10-item batch prompt built by _build_batch_prompt().
 
-Platform: {platform}
-Language: {source_locale}
-Title: {title}
-Content: {content}
+PROMPT_NEWS_ARTICLE = (
+    "Platform: {platform} | Language: {source_locale}\n"
+    "Title: {title}\n"
+    "Content: {content}\n\n"
+    "2-3 sentences in {source_locale}: what happened, who, why it matters. No preamble."
+)
 
-Write a 2-3 sentence summary in the same language as the original content ({source_locale}) that captures what actually happened, who is involved, and why it matters. Be factual and direct. Do not start with "This article" or "The article". Output only the summary, nothing else."""
+PROMPT_DISCUSSION = (
+    "Platform: {platform} | Language: {source_locale}\n"
+    "Title: {title}\n"
+    "Content: {content}\n\n"
+    "2 sentences in {source_locale}: main point or question raised."
+)
 
-PROMPT_DISCUSSION = """You are summarizing a social post for a trending feed.
+PROMPT_YOUTUBE = (
+    "Language: {source_locale}\n"
+    "Title: {title}\n"
+    "Description: {content}\n"
+    "Comments: {top_comments}\n\n"
+    "1-2 sentences in {source_locale}: what this video is about."
+)
 
-Platform: {platform}
-Language: {source_locale}
-Title: {title}
-Content: {content}
-
-Write 2 sentences in the same language as the original content ({source_locale}) capturing the main point or question being raised. Be direct and concrete. Output only the summary, nothing else."""
-
-PROMPT_YOUTUBE = """You are summarizing a YouTube video for a trending feed.
-
-Language: {source_locale}
-Title: {title}
-Description: {content}
-Top viewer comments:
-{top_comments}
-
-Write 1-2 sentences in the same language as the original content ({source_locale}) summarizing what this video is about and what viewers are saying. Output only the summary, nothing else."""
-
-PROMPT_SIGNALS_ONLY = """You are writing a short description for a trending item that has no article body.
-
-Platform: {platform}
-Language: {source_locale}
-Title: {title}
-Top comments from the community:
-{top_comments}
-
-Write 1-2 sentences in the same language as the original content ({source_locale}) capturing what this is about and the key reaction from the community (based on comments above — do not invent facts). Output only the summary, nothing else."""
+PROMPT_SIGNALS_ONLY = (
+    "Platform: {platform} | Language: {source_locale}\n"
+    "Title: {title}\n"
+    "Comments: {top_comments}\n\n"
+    "1-2 sentences in {source_locale}: what this is about and key community reaction. No invented facts."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -177,13 +175,12 @@ def _format_top_comments(raw_payload: dict) -> str:
 
 
 def _build_prompt(item: TrendItem, strategy: str) -> str:
-    """Build the Claude prompt for a given item and strategy."""
+    """Build a single-item Claude prompt (used for per-item fallback calls)."""
     platform = _get_surface_platform(item)
     source_locale = item.original_locale or 'en-US'
     title = item.title_original or ''
-    content = (item.description_original or '').strip()
-    engagement = _format_engagement(item.engagement_signals)
-    top_comments = _format_top_comments(item.raw_payload or {})
+    content = (item.description_original or '').strip()[:CONTENT_MAX_CHARS]
+    top_comments = _format_top_comments(item.raw_payload or {})[:COMMENTS_MAX_CHARS]
 
     if strategy == 'news_article':
         return PROMPT_NEWS_ARTICLE.format(
@@ -206,10 +203,81 @@ def _build_prompt(item: TrendItem, strategy: str) -> str:
     raise ValueError(f"Unknown strategy: {strategy}")
 
 
-async def _run_claude(prompt: str) -> str:
+def _build_batch_prompt(items_with_strategies: list) -> str:
+    """
+    Build a single Claude prompt for up to 10 items.
+
+    Each item gets inline per-item instructions based on its strategy.
+    Expected response format:
+        [1] <summary>
+        [2] <summary>
+        ...
+    """
+    n = len(items_with_strategies)
+    format_lines = "\n".join(f"[{i}] <summary>" for i in range(1, n + 1))
+
+    lines = [
+        "Summarize each item per its instruction. Reply with exactly this format — nothing else:",
+        format_lines,
+        "",
+        "---",
+    ]
+
+    for idx, (item, strategy) in enumerate(items_with_strategies, 1):
+        platform = _get_surface_platform(item)
+        source_locale = item.original_locale or 'en-US'
+        title = item.title_original or ''
+        content = (item.description_original or '').strip()[:CONTENT_MAX_CHARS]
+        top_comments = _format_top_comments(item.raw_payload or {})[:COMMENTS_MAX_CHARS]
+
+        lines.append(f"[{idx}] {strategy} | {platform} | {source_locale}")
+        lines.append(f"Title: {title}")
+
+        if strategy == 'news_article':
+            lines.append(f"Content: {content}")
+            lines.append(f"→ 2-3 sentences in {source_locale}. What happened, who, why it matters. No preamble.")
+        elif strategy == 'discussion':
+            lines.append(f"Content: {content}")
+            lines.append(f"→ 2 sentences in {source_locale}. Main point or question raised.")
+        elif strategy == 'youtube':
+            lines.append(f"Description: {content}")
+            if top_comments:
+                lines.append(f"Comments: {top_comments}")
+            lines.append(f"→ 1-2 sentences in {source_locale}. What this video is about.")
+        elif strategy == 'signals_only':
+            if top_comments:
+                lines.append(f"Comments: {top_comments}")
+            lines.append(f"→ 1-2 sentences in {source_locale}. What this is about and key community reaction. No invented facts.")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _parse_batch_response(raw: str, count: int) -> dict:
+    """
+    Parse a numbered batch response into {1: summary, 2: summary, ...}.
+
+    Handles format:
+        [1] Summary text here...
+        [2] Another summary...
+    """
+    result = {}
+    pattern = re.compile(r'^\[(\d+)\]\s*(.+?)(?=\n\[\d+\]|\Z)', re.MULTILINE | re.DOTALL)
+    for match in pattern.finditer(raw):
+        idx = int(match.group(1))
+        summary = match.group(2).strip()
+        if 1 <= idx <= count and summary:
+            result[idx] = summary
+    return result
+
+
+async def _run_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT_SINGLE) -> str:
     """
     Call `claude -p <prompt>` and return stdout.
     Raises RuntimeError on failure.
+
+    Use timeout=CLAUDE_TIMEOUT_BATCH for multi-item batch calls.
     """
     try:
         process = await asyncio.wait_for(
@@ -218,21 +286,21 @@ async def _run_claude(prompt: str) -> str:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             ),
-            timeout=CLAUDE_TIMEOUT,
+            timeout=timeout,
         )
     except FileNotFoundError:
         raise RuntimeError("Claude CLI not found. Install: npm install -g @anthropic-ai/claude-code")
     except asyncio.TimeoutError:
-        raise RuntimeError(f"Claude CLI process creation timed out after {CLAUDE_TIMEOUT}s")
+        raise RuntimeError(f"Claude CLI process creation timed out after {timeout}s")
 
     try:
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=CLAUDE_TIMEOUT
+            process.communicate(), timeout=timeout
         )
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
-        raise RuntimeError(f"Claude CLI timed out after {CLAUDE_TIMEOUT}s")
+        raise RuntimeError(f"Claude CLI timed out after {timeout}s")
 
     if process.returncode == 0:
         return stdout.decode().strip()
@@ -249,25 +317,24 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> int:
     """
     Pick up to batch_size items to summarize, write back to description_original.
 
-    Two categories are processed:
-      1. zh items with summary_status='pending'  — always summarized (user reads
-         these directly in Chinese; no translation step needed).
-      2. Any item with summary_status='queued'   — pre-selected by the translation
-         worker as top X% by hotness; these will be translated to zh-Hans.
+    Only processes items with summary_status='queued' — pre-selected by the
+    translation worker as the top X% per locale (including zh).
 
-    Non-zh items that are still 'pending' (not yet queued) are intentionally
-    ignored — they did not make the hotness cut and will never be translated,
-    so summarizing them would waste LLM calls.
+    - zh items: queued at top 2% by hotness within zh; summarized but not translated
+    - non-zh items: queued at top X% by hotness within their locale; summarized then translated
 
-    Items are ordered by hotness DESC so the most important items (highest
-    engagement) are summarized first.
+    Items still 'pending' are intentionally ignored — they did not make the
+    hotness cut and will never be displayed, so summarizing them would waste LLM calls.
+
+    Items are ordered by hotness DESC so the most important items are summarized first.
+    All non-skip items are summarized in a single batch claude -p call.
+    Falls back to individual calls per item if the batch response cannot be parsed.
 
     Returns count of processed items.
     """
     items = await sync_to_async(list)(
         TrendItem.objects.filter(
-            Q(lang_group='zh', summary_status='pending') |  # Chinese: always
-            Q(summary_status='queued')                       # Pre-selected: will be translated
+            summary_status='queued'  # Pre-selected top X% per locale (includes zh)
         )
         .select_related('surface')
         .order_by('-hotness', '-collected_at')[:batch_size]
@@ -278,26 +345,44 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> int:
         return 0
 
     logger.info(f"Summarizing {len(items)} item(s)")
-    processed = 0
 
-    for item in items:
-        strategy = _classify(item)
+    # --- Classify all items ---
+    classified = [(item, _classify(item)) for item in items]
 
-        # --- Skip immediately ---
+    # --- Handle skips immediately ---
+    to_summarize = []
+    for item, strategy in classified:
         if strategy == 'skip':
             item.summary_status = 'skipped'
             await sync_to_async(item.save)(update_fields=['summary_status'])
             logger.debug(f"⏭️  Skipped item #{item.id} (platform={_get_surface_platform(item)})")
-            processed += 1
-            continue
+        else:
+            to_summarize.append((item, strategy))
 
-        # --- Summarize ---
-        try:
-            prompt = _build_prompt(item, strategy)
-            summary = await _run_claude(prompt)
+    if not to_summarize:
+        return len(classified)
 
-            # For youtube and signals_only: append Python-formatted engagement
-            # line as Line 2. This replaces the LLM doing the formatting.
+    # --- Attempt single batch call for all non-skip items ---
+    summaries: dict = {}  # {1-based index → summary text}
+    try:
+        prompt = _build_batch_prompt(to_summarize)
+        raw = await _run_claude(prompt, timeout=CLAUDE_TIMEOUT_BATCH)
+        summaries = _parse_batch_response(raw, len(to_summarize))
+
+        if len(summaries) < len(to_summarize):
+            logger.warning(
+                f"Batch response incomplete: got {len(summaries)}/{len(to_summarize)} summaries — "
+                f"will fall back to individual calls for missing items"
+            )
+    except Exception as e:
+        logger.warning(f"Batch summarization failed ({e}) — falling back to individual calls")
+
+    # --- Apply results; fall back per item if not in batch response ---
+    for idx, (item, strategy) in enumerate(to_summarize, 1):
+        if idx in summaries:
+            summary = summaries[idx]
+
+            # Append Python-formatted engagement line for youtube / signals_only
             if strategy in ('youtube', 'signals_only'):
                 eng_line = _format_engagement(item.engagement_signals or {})
                 if eng_line:
@@ -310,18 +395,34 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> int:
             )
             logger.info(
                 f"✅ Summarized item #{item.id} | strategy={strategy} | "
-                f"platform={_get_surface_platform(item)} | "
-                f"chars={len(summary)}"
+                f"platform={_get_surface_platform(item)} | chars={len(summary)}"
             )
+        else:
+            # Fallback: individual call for this item
+            try:
+                prompt = _build_prompt(item, strategy)
+                summary = await _run_claude(prompt, timeout=CLAUDE_TIMEOUT_SINGLE)
 
-        except Exception as e:
-            item.summary_status = 'failed'
-            await sync_to_async(item.save)(update_fields=['summary_status'])
-            logger.warning(f"❌ Summarization failed item #{item.id}: {e}")
+                if strategy in ('youtube', 'signals_only'):
+                    eng_line = _format_engagement(item.engagement_signals or {})
+                    if eng_line:
+                        summary = f"{summary}\n{eng_line}"
 
-        processed += 1
+                item.description_original = summary
+                item.summary_status = 'complete'
+                await sync_to_async(item.save)(
+                    update_fields=['description_original', 'summary_status']
+                )
+                logger.info(
+                    f"✅ Summarized (fallback) item #{item.id} | strategy={strategy} | "
+                    f"platform={_get_surface_platform(item)} | chars={len(summary)}"
+                )
+            except Exception as e:
+                item.summary_status = 'failed'
+                await sync_to_async(item.save)(update_fields=['summary_status'])
+                logger.warning(f"❌ Summarization failed item #{item.id}: {e}")
 
-    return processed
+    return len(classified)
 
 
 async def retry_failed(batch_size: int = 50) -> int:
@@ -360,7 +461,7 @@ async def retry_failed(batch_size: int = 50) -> int:
 
 async def run_worker_loop():
     logger.info("Summarization worker started")
-    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s  BATCH_SIZE={BATCH_SIZE}  CLAUDE_TIMEOUT={CLAUDE_TIMEOUT}s")
+    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s  BATCH_SIZE={BATCH_SIZE}  CLAUDE_TIMEOUT_BATCH={CLAUDE_TIMEOUT_BATCH}s")
 
     while True:
         try:

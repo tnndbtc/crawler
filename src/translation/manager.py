@@ -498,6 +498,165 @@ class TranslationManager:
             region=item.region.key if item.region else '',
         )
 
+    async def translate_canonical_batch(
+        self,
+        items_data: List[Dict[str, Any]],
+    ) -> List[TranslationResult]:
+        """
+        Translate multiple items to canonical en-US in a single claude -p call.
+
+        Falls back to individual translate_canonical() calls per item when
+        the engine does not support batch mode or the batch call fails.
+
+        Args:
+            items_data: List of dicts with keys: title, description,
+                        source_locale, platform, region
+
+        Returns:
+            List of TranslationResult in the same order as items_data.
+        """
+        if not items_data:
+            return []
+
+        config = await self.get_config()
+        target_locale = config.canonical_locale
+
+        if await ProviderHealthManager.is_stopped():
+            return [
+                TranslationResult.from_error(
+                    'all_providers_unavailable', 'system_stopped',
+                    d['source_locale'], target_locale
+                )
+                for d in items_data
+            ]
+
+        engines = await self._get_available_engines('canonical')
+        if not engines:
+            return [
+                TranslationResult.from_error(
+                    'no_available_providers', 'none_available',
+                    d['source_locale'], target_locale
+                )
+                for d in items_data
+            ]
+
+        engine_name = engines[0]
+        engine = self._get_engine(engine_name)
+
+        batch_results = None
+        if hasattr(engine, 'translate_items_batch'):
+            try:
+                batch_results = await engine.translate_items_batch(
+                    items_data, target_locale, 'canonical'
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Batch canonical translation failed: {e} — "
+                    f"falling back to individual calls"
+                )
+
+        # Build final list: use batch result where available, fall back per item
+        final: List[TranslationResult] = []
+        for i, item_data in enumerate(items_data):
+            if (
+                batch_results
+                and i < len(batch_results)
+                and batch_results[i] is not None
+                and batch_results[i].success
+            ):
+                await ProviderHealthManager.mark_success(engine_name)
+                final.append(batch_results[i])
+            else:
+                result = await self.translate_canonical(
+                    title=item_data['title'],
+                    description=item_data.get('description'),
+                    source_locale=item_data['source_locale'],
+                    source_platform=item_data.get('platform', ''),
+                    region=item_data.get('region', ''),
+                )
+                final.append(result)
+
+        return final
+
+    async def translate_display_batch(
+        self,
+        items_data: List[Dict[str, Any]],
+        target_locale: str,
+    ) -> List[TranslationResult]:
+        """
+        Translate multiple items to a display locale in a single claude -p call.
+
+        Falls back to individual translate_display() calls per item when
+        the engine does not support batch mode or the batch call fails.
+
+        Args:
+            items_data: List of dicts with keys: title, description,
+                        source_locale, platform, region
+            target_locale: Target locale code (e.g., 'zh-Hans')
+
+        Returns:
+            List of TranslationResult in the same order as items_data.
+        """
+        if not items_data:
+            return []
+
+        if await ProviderHealthManager.is_stopped():
+            return [
+                TranslationResult.from_error(
+                    'all_providers_unavailable', 'system_stopped',
+                    d['source_locale'], target_locale
+                )
+                for d in items_data
+            ]
+
+        engines = await self._get_available_engines('display')
+        if not engines:
+            return [
+                TranslationResult.from_error(
+                    'no_available_providers', 'none_available',
+                    d['source_locale'], target_locale
+                )
+                for d in items_data
+            ]
+
+        engine_name = engines[0]
+        engine = self._get_engine(engine_name)
+
+        batch_results = None
+        if hasattr(engine, 'translate_items_batch'):
+            try:
+                batch_results = await engine.translate_items_batch(
+                    items_data, target_locale, 'display'
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Batch display translation failed: {e} — "
+                    f"falling back to individual calls"
+                )
+
+        final: List[TranslationResult] = []
+        for i, item_data in enumerate(items_data):
+            if (
+                batch_results
+                and i < len(batch_results)
+                and batch_results[i] is not None
+                and batch_results[i].success
+            ):
+                await ProviderHealthManager.mark_success(engine_name)
+                final.append(batch_results[i])
+            else:
+                result = await self.translate_display(
+                    title=item_data['title'],
+                    description=item_data.get('description'),
+                    source_locale=item_data['source_locale'],
+                    target_locale=target_locale,
+                    source_platform=item_data.get('platform', ''),
+                    region=item_data.get('region', ''),
+                )
+                final.append(result)
+
+        return final
+
     def clear_cache(self):
         """Clear in-memory translation cache."""
         self._cache.clear()

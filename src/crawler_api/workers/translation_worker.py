@@ -51,6 +51,15 @@ logger = logging.getLogger(__name__)
 # Configuration from environment
 TRANSLATION_WORKER_POLL_INTERVAL = int(os.getenv('TRANSLATION_WORKER_POLL_INTERVAL', '30'))
 
+# Number of items per claude -p batch call for translation
+TRANSLATION_BATCH_CHUNK = 5
+
+
+def _chunks(lst, n):
+    """Yield successive n-sized chunks from a list."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
 # Health probe configuration
 HEALTH_PROBE_INTERVAL = 300  # 5 minutes between health probes when STOPPED
 _last_health_probe_time: float = 0
@@ -99,60 +108,73 @@ async def process_canonical_translations(manager: TranslationManager, batch_size
     logger.info(f"Processing {len(items_need_canonical)} canonical translation(s)")
 
     processed_count = 0
-    for item in items_need_canonical:
-        try:
-            logger.debug(
-                f"📝 Canonical: item #{item.id} | "
-                f"{item.original_locale} → en-US | "
-                f"Title: {item.title_original[:50]}..."
-            )
 
-            result = await manager.translate_item_canonical(item)
+    for chunk in _chunks(items_need_canonical, TRANSLATION_BATCH_CHUNK):
+        # Build batch input for this chunk
+        items_data = [
+            {
+                'title': item.title_original,
+                'description': item.description_original,
+                'source_locale': item.original_locale,
+                'platform': item.surface.platform if item.surface else '',
+                'region': item.region.key if item.region else '',
+            }
+            for item in chunk
+        ]
 
-            if result.success:
-                item.canonical_title = result.title
-                item.canonical_description = result.description
-                item.canonical_status = 'complete'
-                item.canonical_engine = result.engine
-                item.canonical_error = None
+        # Translate chunk in one claude -p call (falls back to individual if needed)
+        chunk_results = await manager.translate_canonical_batch(items_data)
 
-                logger.info(
-                    f"✅ Canonical translated: item #{item.id} | "
-                    f"engine: {result.engine}"
+        for item, result in zip(chunk, chunk_results):
+            try:
+                logger.debug(
+                    f"📝 Canonical: item #{item.id} | "
+                    f"{item.original_locale} → en-US | "
+                    f"Title: {item.title_original[:50]}..."
                 )
-            elif result.engine in ('system_stopped', 'none_available'):
-                # Provider unavailable - keep item as pending
-                # Don't update status or save, just skip this item
-                logger.info(
-                    f"⏸️ Canonical skipped (providers unavailable): item #{item.id}"
+
+                if result.success:
+                    item.canonical_title = result.title
+                    item.canonical_description = result.description
+                    item.canonical_status = 'complete'
+                    item.canonical_engine = result.engine
+                    item.canonical_error = None
+
+                    logger.info(
+                        f"✅ Canonical translated: item #{item.id} | "
+                        f"engine: {result.engine}"
+                    )
+                elif result.engine in ('system_stopped', 'none_available'):
+                    # Provider unavailable — keep item as pending, skip saving
+                    logger.info(
+                        f"⏸️ Canonical skipped (providers unavailable): item #{item.id}"
+                    )
+                    continue
+                else:
+                    item.canonical_status = 'failed'
+                    item.canonical_error = result.error
+                    item.canonical_engine = result.engine
+
+                    logger.warning(
+                        f"❌ Canonical failed: item #{item.id} | "
+                        f"error: {result.error}"
+                    )
+
+                await sync_to_async(item.save)(
+                    update_fields=[
+                        'canonical_title', 'canonical_description',
+                        'canonical_status', 'canonical_engine', 'canonical_error'
+                    ]
                 )
-                continue
-            else:
+                processed_count += 1
+
+            except Exception as e:
+                logger.error(f"Error processing canonical for item #{item.id}: {e}", exc_info=True)
                 item.canonical_status = 'failed'
-                item.canonical_error = result.error
-                item.canonical_engine = result.engine
-
-                logger.warning(
-                    f"❌ Canonical failed: item #{item.id} | "
-                    f"error: {result.error}"
+                item.canonical_error = str(e)
+                await sync_to_async(item.save)(
+                    update_fields=['canonical_status', 'canonical_error']
                 )
-
-            await sync_to_async(item.save)(
-                update_fields=[
-                    'canonical_title', 'canonical_description',
-                    'canonical_status', 'canonical_engine', 'canonical_error'
-                ]
-            )
-            processed_count += 1
-
-        except Exception as e:
-            logger.error(f"Error processing canonical for item #{item.id}: {e}", exc_info=True)
-            # Mark as failed
-            item.canonical_status = 'failed'
-            item.canonical_error = str(e)
-            await sync_to_async(item.save)(
-                update_fields=['canonical_status', 'canonical_error']
-            )
 
     return processed_count
 
@@ -303,25 +325,37 @@ async def process_display_translations_selective(
         f"(selective mode)"
     )
 
+    # Inline field names for DUAL-WRITE (backward compatibility)
+    locale_suffix = target_locale.replace('-', '_').lower()
+    title_field = f'display_title_{locale_suffix}'
+    description_field = f'display_description_{locale_suffix}'
+    status_field = f'display_status_{locale_suffix}'
+    engine_field = f'display_engine_{locale_suffix}'
+    error_field = f'display_error_{locale_suffix}'
+
     processed_count = 0
+
+    # -----------------------------------------------------------------------
+    # First pass: collect item data and filter out already-translated items
+    # -----------------------------------------------------------------------
+    candidates = []  # list of (item, item_data)
+
     for item in items:
         try:
-            # Extract all item data in sync context to avoid async database access
-            def get_item_data():
+            def get_item_data(i=item):
                 return {
-                    'item_id': item.id,
-                    'base_lang': item.base_lang,
-                    'hotness': item.hotness,
-                    'title': item.title_original,
-                    'description': item.description_original,
-                    'source_locale': item.original_locale,
-                    'source_platform': item.surface.platform if item.surface else '',
-                    'region': item.region.key if item.region else '',
+                    'item_id': i.id,
+                    'base_lang': i.base_lang,
+                    'hotness': i.hotness,
+                    'title': i.title_original,
+                    'description': i.description_original,
+                    'source_locale': i.original_locale,
+                    'source_platform': i.surface.platform if i.surface else '',
+                    'region': i.region.key if i.region else '',
                 }
 
             item_data = await sync_to_async(get_item_data)()
 
-            # Skip if derivation already exists (race condition protection)
             derivation_exists = await sync_to_async(
                 ItemDerivation.objects.filter(
                     item=item,
@@ -342,18 +376,86 @@ async def process_display_translations_selective(
                 f"hotness={item_data['hotness']:.2f}"
             )
 
-            # Translate using direct method (all data now in simple dict)
-            result = await manager.translate_display(
-                title=item_data['title'],
-                description=item_data['description'],
-                source_locale=item_data['source_locale'],
-                target_locale=target_locale,
-                source_platform=item_data['source_platform'],
-                region=item_data['region']
+            candidates.append((item, item_data))
+
+        except Exception as e:
+            try:
+                item_id = item.id
+            except Exception:
+                item_id = '?'
+            logger.error(
+                f"Error collecting data for item #{item_id}: {e}", exc_info=True
             )
 
+    if not candidates:
+        return processed_count
+
+    # -----------------------------------------------------------------------
+    # Batch translate: chunks of TRANSLATION_BATCH_CHUNK items per claude -p call
+    # -----------------------------------------------------------------------
+    all_results: dict = {}  # item_id → TranslationResult
+
+    for chunk in _chunks(candidates, TRANSLATION_BATCH_CHUNK):
+        batch_input = [
+            {
+                'title': d['title'],
+                'description': d['description'],
+                'source_locale': d['source_locale'],
+                'platform': d['source_platform'],
+                'region': d['region'],
+            }
+            for _, d in chunk
+        ]
+
+        try:
+            chunk_results = await manager.translate_display_batch(batch_input, target_locale)
+            for (item, item_data), result in zip(chunk, chunk_results):
+                all_results[item_data['item_id']] = result
+        except Exception as e:
+            logger.error(f"Chunk batch translation error: {e}", exc_info=True)
+            # Fall back to individual calls for each item in this chunk
+            for item, item_data in chunk:
+                try:
+                    result = await manager.translate_display(
+                        title=item_data['title'],
+                        description=item_data['description'],
+                        source_locale=item_data['source_locale'],
+                        target_locale=target_locale,
+                        source_platform=item_data['source_platform'],
+                        region=item_data['region'],
+                    )
+                    all_results[item_data['item_id']] = result
+                except Exception as e2:
+                    logger.error(
+                        f"Individual translation fallback failed for "
+                        f"item #{item_data['item_id']}: {e2}"
+                    )
+
+    # -----------------------------------------------------------------------
+    # Second pass: save results
+    # -----------------------------------------------------------------------
+    for item, item_data in candidates:
+        try:
+            result = all_results.get(item_data['item_id'])
+
+            if result is None:
+                logger.warning(
+                    f"No translation result for item #{item_data['item_id']}, marking failed"
+                )
+                await sync_to_async(ItemDerivation.objects.get_or_create)(
+                    item=item,
+                    derivation_type='translation',
+                    target_locale=target_locale,
+                    defaults={
+                        'content_title': '', 'content_body': '',
+                        'engine': 'error', 'status': 'failed',
+                        'error_message': 'no result returned'
+                    }
+                )
+                processed_count += 1
+                continue
+
             if result.success:
-                # Store in ItemDerivation (use get_or_create to handle race conditions)
                 derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
                     item=item,
                     derivation_type='translation',
@@ -374,13 +476,6 @@ async def process_display_translations_selective(
 
                     # DUAL-WRITE: Also update inline fields for backward compatibility
                     # This can be removed in Phase C (cleanup) after validation
-                    locale_suffix = target_locale.replace('-', '_').lower()
-                    title_field = f'display_title_{locale_suffix}'
-                    description_field = f'display_description_{locale_suffix}'
-                    status_field = f'display_status_{locale_suffix}'
-                    engine_field = f'display_engine_{locale_suffix}'
-                    error_field = f'display_error_{locale_suffix}'
-
                     if hasattr(TrendItem, title_field):
                         setattr(item, title_field, result.title)
                         setattr(item, description_field, result.description)
@@ -400,14 +495,12 @@ async def process_display_translations_selective(
                     )
 
             elif result.engine in ('system_stopped', 'none_available'):
-                # Provider unavailable - skip this item
                 logger.info(
                     f"⏸️ Selective translation skipped (providers unavailable): item #{item_data['item_id']}"
                 )
-                continue
+                continue  # Do not increment processed_count
 
             else:
-                # Translation failed (use get_or_create to handle race conditions)
                 derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
                     item=item,
                     derivation_type='translation',
@@ -434,31 +527,22 @@ async def process_display_translations_selective(
             processed_count += 1
 
         except Exception as e:
-            # Get item ID safely (item_data might not exist if error was early)
-            try:
-                item_id = item_data['item_id']
-            except (NameError, KeyError):
-                item_id = await sync_to_async(lambda: item.id)()
-
             logger.error(
-                f"Error processing selective translation for item #{item_id}: {e}",
+                f"Error saving result for item #{item_data['item_id']}: {e}",
                 exc_info=True
             )
-            # Try to create failed derivation
             try:
                 await sync_to_async(ItemDerivation.objects.get_or_create)(
                     item=item,
                     derivation_type='translation',
                     target_locale=target_locale,
                     defaults={
-                        'content_title': '',
-                        'content_body': '',
-                        'engine': 'error',
-                        'status': 'failed',
+                        'content_title': '', 'content_body': '',
+                        'engine': 'error', 'status': 'failed',
                         'error_message': str(e)
                     }
                 )
-            except:
+            except Exception:
                 pass  # Best effort
 
     return processed_count
@@ -765,14 +849,10 @@ async def run_worker_loop():
             # 1. Mark English items as skipped
             skipped_english = await mark_english_items_as_skipped(batch_size)
 
-            # 2. Process canonical translations (en-US) only if 'en' is in target_locales.
-            # Remove 'en' from translation_target_locales in SystemSettings to pause
-            # canonical translation without affecting zh-Hans or other display translations.
-            if 'en' in target_locales:
-                processed_canonical = await process_canonical_translations(manager, batch_size)
-            else:
-                processed_canonical = 0
-                logger.debug("Canonical translation skipped: 'en' not in target_locales")
+            # 2. Canonical translation (en-US) is disabled.
+            # Hotness ranking is done within each locale group, so cross-locale
+            # canonical translation is not needed.
+            processed_canonical = 0
 
             # 3. Pre-select top X% non-target-lang items for summarization.
             # This marks them as 'queued' so the summarization worker processes

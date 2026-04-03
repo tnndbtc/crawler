@@ -163,7 +163,6 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
     # Get settings
     settings = get_translation_settings()
-    hot_percent = get_hot_percent_for_locale(target_locale, settings)
     source_langs = settings['source_langs']
 
     # Get target language group for same-language skip logic
@@ -171,8 +170,8 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
     logger.info(
         f"Selecting items for translation to {target_locale}: "
-        f"hot_percent={hot_percent}%, source_langs={source_langs if source_langs else 'ALL'}, "
-        f"excluding target_lang_group={target_lang_group}"
+        f"source_langs={source_langs if source_langs else 'ALL'}, "
+        f"excluding target_lang_group={target_lang_group} (per-locale hot_percent)"
     )
 
     # Build base query:
@@ -226,6 +225,10 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
         if not lang_group:
             continue
 
+        # Use per-source-locale hot_percent (e.g. en=5%, ja=2%, ru=2%)
+        by_locale = settings.get('hot_percent_by_locale', {})
+        hot_percent_for_group = by_locale.get(lang_group, settings.get('hot_percent', 10))
+
         # Build query for ALL items in this lang_group (including already-translated)
         # This gives us the TRUE total for percentage calculation
         if source_langs and len(source_langs) > 0:
@@ -266,9 +269,9 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
         already_translated_count = already_translated.count()
 
-        # Calculate TARGET count based on TOTAL items
+        # Calculate TARGET count based on TOTAL items and per-source-locale percent
         target_count = calculate_translation_count(
-            total_count, hot_percent
+            total_count, hot_percent_for_group
         )
 
         # Calculate how many MORE we need to translate
@@ -276,6 +279,7 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
         logger.info(
             f"lang_group={lang_group}: total={total_count}, "
+            f"hot_percent={hot_percent_for_group}%, "
             f"already_translated={already_translated_count}, "
             f"target={target_count}, needed={needed_count}"
         )
@@ -319,16 +323,18 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
 
 def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> int:
     """
-    Mark top X% non-target-lang items as 'queued' so the summarization worker
-    processes only items that will eventually be translated.
+    Mark top X% items per source locale as 'queued' so the summarization worker
+    processes only the hottest items.
 
     This flips the pipeline dependency:
       OLD: summarize ALL → translate top X%
-      NEW: pre-select top X% → summarize only those → translate
+      NEW: pre-select top X% per locale → summarize only those → translate (non-zh only)
 
-    zh-Hans items (or whatever the target locale is) are excluded here —
-    the summarization worker always processes them via its own
-    `lang_group='zh', summary_status='pending'` branch.
+    Covers ALL lang_groups including zh:
+    - zh items: queued for summarization only (no translation needed — already Chinese)
+    - non-zh items: queued for summarization + will be translated to target_locale
+
+    Hot percent is taken per-source-locale from hot_percent_by_locale[lang_group].
 
     Args:
         target_locale: Target translation locale (e.g. 'zh-Hans')
@@ -340,17 +346,15 @@ def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> 
     from crawler_admin.models import TrendItem, ItemDerivation
 
     settings = get_translation_settings()
-    hot_percent = get_hot_percent_for_locale(target_locale, settings)
     source_langs = settings['source_langs']
     target_lang_group = locale_to_lang_group(target_locale)  # 'zh' for zh-Hans
 
     logger.info(
-        f"Pre-selecting items for summarization (→ {target_locale}): "
-        f"hot_percent={hot_percent}%, source_langs={source_langs or 'ALL'}, "
-        f"excluding lang_group={target_lang_group}"
+        f"Pre-selecting items for summarization (target={target_locale}): "
+        f"source_langs={source_langs or 'ALL'}, per-locale hot_percent"
     )
 
-    # Base query: items with hotness, still pending, not same lang as target
+    # Base query: pending items with hotness
     if source_langs:
         base_query = TrendItem.objects.filter(
             base_lang__in=source_langs,
@@ -363,19 +367,15 @@ def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> 
             summary_status='pending',
         )
 
-    # Never queue same-language items — they're handled by the zh branch
-    base_query = base_query.exclude(lang_group=target_lang_group)
-
-    # Skip items that already have a complete translation (no need to re-queue)
+    # Subquery: items that already have a complete translation (skip re-queuing for non-zh)
     has_translation = ItemDerivation.objects.filter(
         item_id=OuterRef('id'),
         derivation_type='translation',
         target_locale=target_locale,
         status='complete'
     )
-    base_query = base_query.exclude(Exists(has_translation))
 
-    # Get distinct lang_groups present in pending items
+    # Get all lang_groups in the pending pool (including zh)
     lang_groups = list(set(base_query.values_list('lang_group', flat=True)))
 
     total_queued = 0
@@ -384,46 +384,57 @@ def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> 
         if not lang_group:
             continue
 
-        # True total for this lang_group (including already queued/summarized)
-        # This gives the correct denominator for the percentage calculation.
+        is_target_lang = (lang_group == target_lang_group)  # True for zh
+
+        # Per-source-locale hot_percent (e.g. zh=2%, en=5%, ja=2%)
+        by_locale = settings.get('hot_percent_by_locale', {})
+        hot_percent_for_group = by_locale.get(lang_group, settings.get('hot_percent', 10))
+
+        # True total for this lang_group (denominator for the % calculation)
         if source_langs:
             total_in_group = TrendItem.objects.filter(
                 base_lang__in=source_langs,
                 lang_group=lang_group,
                 hotness__isnull=False,
-            ).exclude(lang_group=target_lang_group).count()
+            ).count()
         else:
             total_in_group = TrendItem.objects.filter(
                 lang_group=lang_group,
                 hotness__isnull=False,
-            ).exclude(lang_group=target_lang_group).count()
+            ).count()
 
         if total_in_group == 0:
             continue
 
-        target_count = calculate_translation_count(total_in_group, hot_percent)
+        target_count = calculate_translation_count(total_in_group, hot_percent_for_group)
 
-        # Items already handled (queued, complete, or skipped) — don't re-count
+        # Items already handled in the summarization pipeline for this group
         already_handled = TrendItem.objects.filter(
             lang_group=lang_group,
             hotness__isnull=False,
             summary_status__in=['queued', 'complete', 'skipped'],
-        ).exclude(lang_group=target_lang_group).count()
+        ).count()
 
         needed = max(0, target_count - already_handled)
 
         logger.debug(
             f"lang_group={lang_group}: total={total_in_group}, "
+            f"hot_percent={hot_percent_for_group}%, "
             f"already_handled={already_handled}, target={target_count}, needed={needed}"
         )
 
         if needed == 0:
             continue
 
-        # Take top N by hotness from the pending pool for this group
+        # Pending pool for this group
+        group_pending = base_query.filter(lang_group=lang_group)
+
+        # Non-zh: also skip items already translated (no need to re-summarize)
+        if not is_target_lang:
+            group_pending = group_pending.exclude(Exists(has_translation))
+
         ids_to_queue = list(
-            base_query.filter(lang_group=lang_group)
-            .order_by('-hotness')
+            group_pending.order_by('-hotness')
             .values_list('id', flat=True)[:needed]
         )
 
@@ -441,7 +452,7 @@ def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> 
 
         logger.info(
             f"lang_group={lang_group}: queued {updated} item(s) for summarization "
-            f"(target={target_count}, total_in_group={total_in_group})"
+            f"(hot_percent={hot_percent_for_group}%, target={target_count}, total={total_in_group})"
         )
 
         if total_queued >= limit:

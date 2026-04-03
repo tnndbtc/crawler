@@ -23,7 +23,8 @@ from . import register_engine
 logger = logging.getLogger(__name__)
 
 # Timeout for each `claude -p` subprocess call (seconds)
-CLAUDE_CLI_TIMEOUT = 60
+CLAUDE_CLI_TIMEOUT = 60        # single-item calls
+CLAUDE_CLI_TIMEOUT_BATCH = 120 # multi-item batch calls (5 items)
 
 
 def _render_prompt(template: str, **kwargs) -> str:
@@ -222,11 +223,95 @@ class ClaudeEngine(BaseTranslationEngine):
             metadata={'mode': 'batch'}
         )
 
-    async def _run_claude_cli(self, prompt: str) -> str:
+    async def translate_items_batch(
+        self,
+        items: list,
+        target_locale: str,
+        translation_type: str = 'display',
+    ) -> list:
+        """
+        Translate up to 5 items in a single claude -p call.
+
+        Args:
+            items: List of dicts with keys: title, description, source_locale, platform
+            target_locale: Target locale code (e.g., 'en-US', 'zh-Hans')
+            translation_type: 'canonical' or 'display'
+
+        Returns:
+            List of TranslationResult (or None for items that could not be parsed).
+            Raises translation exceptions on CLI-level failures.
+        """
+        if not items:
+            return []
+
+        # Build per-item block
+        item_lines = []
+        for i, item in enumerate(items, 1):
+            item_lines.append(
+                f"[{i}] From: {item.get('source_locale', 'unknown')} | "
+                f"Platform: {item.get('platform', 'unknown')}"
+            )
+            item_lines.append(f"Title: {item.get('title', '')}")
+            item_lines.append(f"Description: {(item.get('description') or '').strip()}")
+            item_lines.append("")
+
+        items_text = "\n".join(item_lines)
+
+        if translation_type == 'canonical':
+            prompt = (
+                "Translate each item to en-US. Literal, machine-consistent.\n"
+                "Return JSON array in same order — no other text:\n"
+                '[{"title":"...","description":"..."}, ...]\n\n'
+                + items_text
+            )
+        else:
+            prompt = (
+                f"Translate each item to {target_locale}. Natural, preserve tone.\n"
+                "Return JSON array in same order — no other text:\n"
+                '[{"title":"...","description":"..."}, ...]\n\n'
+                + items_text
+            )
+
+        raw = await self._run_claude_cli(prompt, timeout=CLAUDE_CLI_TIMEOUT_BATCH)
+
+        # Strip markdown code fences if present
+        stripped = re.sub(r'^```(?:json)?\s*\n?', '', raw, flags=re.MULTILINE)
+        stripped = re.sub(r'\n?```\s*$', '', stripped, flags=re.MULTILINE)
+        stripped = stripped.strip()
+
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            logger.debug(f"Multi-batch JSON parse failed: {raw[:300]}")
+            return [None] * len(items)
+
+        if not isinstance(parsed, list):
+            logger.debug(f"Multi-batch response is not a list: {type(parsed)}")
+            return [None] * len(items)
+
+        results = []
+        for i, item in enumerate(items):
+            entry = parsed[i] if i < len(parsed) else None
+            if isinstance(entry, dict) and 'title' in entry:
+                results.append(TranslationResult(
+                    title=entry['title'],
+                    description=entry.get('description'),
+                    engine=self.name,
+                    source_locale=item.get('source_locale', ''),
+                    target_locale=target_locale,
+                    metadata={'mode': 'multi_batch'}
+                ))
+            else:
+                results.append(None)
+
+        return results
+
+    async def _run_claude_cli(self, prompt: str, timeout: int = CLAUDE_CLI_TIMEOUT) -> str:
         """
         Run `claude -p <prompt>` and return stdout.
 
         Raises appropriate exception subclasses for health tracking.
+        Use timeout=CLAUDE_CLI_TIMEOUT_BATCH for multi-item batch calls.
         """
         try:
             process = await asyncio.wait_for(
@@ -235,7 +320,7 @@ class ClaudeEngine(BaseTranslationEngine):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 ),
-                timeout=CLAUDE_CLI_TIMEOUT
+                timeout=timeout
             )
         except FileNotFoundError:
             raise AuthenticationError(
@@ -244,20 +329,20 @@ class ClaudeEngine(BaseTranslationEngine):
             )
         except asyncio.TimeoutError:
             raise TranslationError(
-                f"Claude CLI process creation timed out after {CLAUDE_CLI_TIMEOUT}s",
+                f"Claude CLI process creation timed out after {timeout}s",
                 engine=self.name
             )
 
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(),
-                timeout=CLAUDE_CLI_TIMEOUT
+                timeout=timeout
             )
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()
             raise TranslationError(
-                f"Claude CLI timed out after {CLAUDE_CLI_TIMEOUT}s",
+                f"Claude CLI timed out after {timeout}s",
                 engine=self.name
             )
 
