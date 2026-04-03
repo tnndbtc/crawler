@@ -97,30 +97,41 @@ async def collect(
     soup = BeautifulSoup(html, "html.parser")
     items: List[CollectedItem] = []
 
-    # Strategy 1: primary selector — each trending item wrapper
-    wrappers = soup.select("div.category-wrap_iQLTo")
+    # Strategy 1: primary selector — class prefix is stable, suffix changes with builds
+    # Confirmed live class: category-wrap_iQLoo (April 2026)
+    wrappers = soup.select("div[class*='category-wrap_']")
     if not wrappers:
         # Strategy 2: alternate item wrapper
-        wrappers = soup.select("div.item-wrap_J0Tdd")
+        wrappers = soup.select("div[class*='item-wrap_']")
 
     if wrappers:
         for rank, wrapper in enumerate(wrappers[:limit], start=1):
-            # Extract title
-            title_el = wrapper.select_one("div.c-single-text-ellipsis") or wrapper.select_one("a")
+            # Extract title — in a.title_* > div.c-single-text-ellipsis
+            title_el = (
+                wrapper.select_one("div[class*='c-single-text-ellipsis']")
+                or wrapper.select_one("a[class*='title_']")
+                or wrapper.select_one("a")
+            )
             if not title_el:
                 continue
             title = title_el.get_text(strip=True)
             if not title:
                 continue
 
-            # Extract link
-            link_el = wrapper.select_one("a[href]")
+            # Extract link — prefer the title anchor (class contains 'title_')
+            link_el = (
+                wrapper.select_one("a[class*='title_'][href]")
+                or wrapper.select_one("a[href]")
+            )
             url = link_el["href"] if link_el and link_el.get("href") else BAIDU_HOT_URL
             if url.startswith("/"):
                 url = urljoin("https://top.baidu.com", url)
 
-            # Extract hot score
-            score_el = wrapper.select_one("div.hot-index_1Bl1a") or wrapper.select_one(".trend_2RttY")
+            # Extract hot score — in div.hot-index_* (class suffix changes with builds)
+            score_el = (
+                wrapper.select_one("div[class*='hot-index_']")
+                or wrapper.select_one("div[class*='trend_']")
+            )
             hot_score_str = score_el.get_text(strip=True) if score_el else ""
             hot_score = _parse_hot_score(hot_score_str)
 

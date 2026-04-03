@@ -4,7 +4,8 @@ Hatena Bookmark Hot Entry surface collector.
 Fetches hot entries (popular bookmarks) from Hatena Bookmark (b.hatena.ne.jp),
 a Japanese social bookmarking service. No authentication required.
 
-Supports optional category filtering via config.
+Uses the RSS feed endpoint (JSON API was removed).
+URL: https://b.hatena.ne.jp/hotentry?mode=rss
 
 Surface type: ranking
 Bucket: hot_now
@@ -15,12 +16,12 @@ import logging
 from typing import Optional, Tuple, List
 
 from .collector_interface import CollectedItem
-from shared.http_client import RateLimitedClient
+from .base_rss import collect_rss_feed
 
 logger = logging.getLogger(__name__)
 
-# Hatena Bookmark hot entry base URL
-HATENA_HOTENTRY_BASE = "https://b.hatena.ne.jp/hotentry"
+HATENA_RSS_URL = "https://b.hatena.ne.jp/hotentry?mode=rss"
+HATENA_CATEGORY_RSS_URL = "https://b.hatena.ne.jp/hotentry/{category}?mode=rss"
 
 
 async def collect(
@@ -29,90 +30,44 @@ async def collect(
     limit: int
 ) -> Tuple[List[CollectedItem], Optional[str]]:
     """
-    Collect hot entries from Hatena Bookmark.
+    Collect hot entries from Hatena Bookmark via RSS feed.
+
+    The JSON API (hotentry.json) was removed by Hatena. This collector
+    uses the RSS feed which remains publicly available.
 
     Config params (from TrendSurface.config_json):
-        - category: Optional category slug (e.g. "it", "general", "social", "economics",
-          "entertainment", "game", "fun", "science"). If omitted, fetches all-category hot entries.
+        - category: Optional category slug (e.g. "it", "general", "social",
+          "economics", "entertainment", "game", "fun", "science").
+          If omitted, fetches all-category hot entries.
 
     Args:
         config: Surface configuration
-        cursor: Pagination cursor (unused — API returns full list)
+        cursor: Pagination cursor (unused — RSS returns full list)
         limit: Maximum items to collect
 
     Returns:
         (items, None) — no pagination cursor
 
     Raises:
-        httpx.HTTPError: On API request failures
+        httpx.HTTPError: On feed request failures
     """
     category = config.get("category")
 
-    # Build endpoint URL — optionally scoped to a category
     if category:
-        url = f"{HATENA_HOTENTRY_BASE}/{category}.json"
+        feed_url = HATENA_CATEGORY_RSS_URL.format(category=category)
     else:
-        url = f"{HATENA_HOTENTRY_BASE}.json"
+        feed_url = HATENA_RSS_URL
 
-    logger.info(f"Fetching Hatena hot entries (category={category or 'all'})...")
+    logger.info(f"Fetching Hatena hot entries via RSS (category={category or 'all'})...")
 
-    async with RateLimitedClient(timeout=30.0) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        data = response.json()
-
-    # API may return either:
-    #   - a list of entries directly
-    #   - an object with an "items" key
-    if isinstance(data, list):
-        entries = data
-    elif isinstance(data, dict):
-        entries = data.get("items", [])
-    else:
-        logger.warning("Hatena API returned unexpected format")
-        return [], None
-
-    items: List[CollectedItem] = []
-    for rank, entry in enumerate(entries[:limit], start=1):
-        title = entry.get("title", "Untitled")
-
-        # "url" is the bookmarked (original) page URL
-        content_url = entry.get("url", "")
-
-        # "entry_url" is the Hatena bookmark page for this entry
-        entry_url = entry.get("entry_url", "")
-
-        description = entry.get("description", "")
-
-        # Bookmark count may be keyed as "bookmarks_count" or "count"
-        bookmarks = entry.get("bookmarks_count") or entry.get("count") or 0
-
-        # Timestamp may be keyed as "timestamp" or "date"
-        timestamp = entry.get("timestamp") or entry.get("date")
-
-        item: CollectedItem = {
-            "title": title,
-            "description": description[:1000] if description else None,
-            "url": content_url,
-            "locale": "ja-JP",
-            "rank_position": rank,
-            "engagement_signals": {
-                "bookmarks": bookmarks,
-            },
-            "raw_payload": {
-                **entry,
-                "_metadata": {
-                    "entry_url": entry_url,
-                    "category": category,
-                },
-            },
-        }
-
-        # Add timestamp only when present (format varies: ISO8601 or human-readable)
-        if timestamp:
-            item["published_at"] = str(timestamp)
-
-        items.append(item)
+    items, next_cursor = await collect_rss_feed(
+        rss_url=feed_url,
+        source="hatena",
+        config=config,
+        cursor=cursor,
+        limit=limit,
+        locale="ja-JP",
+    )
 
     logger.info(f"Collected {len(items)} items from Hatena")
     return items, None

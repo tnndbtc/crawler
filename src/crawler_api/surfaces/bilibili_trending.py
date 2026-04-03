@@ -76,6 +76,10 @@ async def collect(
         title = video.get("title", "Untitled")
         desc = video.get("desc", "")
         pic = video.get("pic", "")
+        # Bilibili API returns http:// URLs; force https:// to avoid
+        # mixed-content browser blocks when the UI is served over HTTPS.
+        if pic.startswith("http://"):
+            pic = "https://" + pic[7:]
 
         # Build canonical video URL
         url = f"https://www.bilibili.com/video/{bvid}" if bvid else ""

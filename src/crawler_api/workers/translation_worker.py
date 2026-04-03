@@ -774,7 +774,17 @@ async def run_worker_loop():
                 processed_canonical = 0
                 logger.debug("Canonical translation skipped: 'en' not in target_locales")
 
-            # 3. Process display translations for each target locale
+            # 3. Pre-select top X% non-target-lang items for summarization.
+            # This marks them as 'queued' so the summarization worker processes
+            # only items that will be translated — avoiding wasted LLM calls on
+            # items that will never make the translation cut.
+            # zh-Hans items are always summarized by the summarization worker
+            # independently (via the lang_group='zh' branch in its query).
+            from shared.translation_selection import pre_select_items_for_summarization
+            for locale in target_locales:
+                await sync_to_async(pre_select_items_for_summarization)(locale)
+
+            # 4. Process display translations for each target locale
 
             processed_display = {}
             for locale in target_locales:

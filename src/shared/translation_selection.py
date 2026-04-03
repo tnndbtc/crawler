@@ -317,6 +317,143 @@ def select_items_for_translation(target_locale: str, limit: int = 100) -> List:
     return selected_items
 
 
+def pre_select_items_for_summarization(target_locale: str, limit: int = 500) -> int:
+    """
+    Mark top X% non-target-lang items as 'queued' so the summarization worker
+    processes only items that will eventually be translated.
+
+    This flips the pipeline dependency:
+      OLD: summarize ALL → translate top X%
+      NEW: pre-select top X% → summarize only those → translate
+
+    zh-Hans items (or whatever the target locale is) are excluded here —
+    the summarization worker always processes them via its own
+    `lang_group='zh', summary_status='pending'` branch.
+
+    Args:
+        target_locale: Target translation locale (e.g. 'zh-Hans')
+        limit: Safety cap on total items marked per call
+
+    Returns:
+        Number of items newly marked as 'queued'
+    """
+    from crawler_admin.models import TrendItem, ItemDerivation
+
+    settings = get_translation_settings()
+    hot_percent = get_hot_percent_for_locale(target_locale, settings)
+    source_langs = settings['source_langs']
+    target_lang_group = locale_to_lang_group(target_locale)  # 'zh' for zh-Hans
+
+    logger.info(
+        f"Pre-selecting items for summarization (→ {target_locale}): "
+        f"hot_percent={hot_percent}%, source_langs={source_langs or 'ALL'}, "
+        f"excluding lang_group={target_lang_group}"
+    )
+
+    # Base query: items with hotness, still pending, not same lang as target
+    if source_langs:
+        base_query = TrendItem.objects.filter(
+            base_lang__in=source_langs,
+            hotness__isnull=False,
+            summary_status='pending',
+        )
+    else:
+        base_query = TrendItem.objects.filter(
+            hotness__isnull=False,
+            summary_status='pending',
+        )
+
+    # Never queue same-language items — they're handled by the zh branch
+    base_query = base_query.exclude(lang_group=target_lang_group)
+
+    # Skip items that already have a complete translation (no need to re-queue)
+    has_translation = ItemDerivation.objects.filter(
+        item_id=OuterRef('id'),
+        derivation_type='translation',
+        target_locale=target_locale,
+        status='complete'
+    )
+    base_query = base_query.exclude(Exists(has_translation))
+
+    # Get distinct lang_groups present in pending items
+    lang_groups = list(set(base_query.values_list('lang_group', flat=True)))
+
+    total_queued = 0
+
+    for lang_group in lang_groups:
+        if not lang_group:
+            continue
+
+        # True total for this lang_group (including already queued/summarized)
+        # This gives the correct denominator for the percentage calculation.
+        if source_langs:
+            total_in_group = TrendItem.objects.filter(
+                base_lang__in=source_langs,
+                lang_group=lang_group,
+                hotness__isnull=False,
+            ).exclude(lang_group=target_lang_group).count()
+        else:
+            total_in_group = TrendItem.objects.filter(
+                lang_group=lang_group,
+                hotness__isnull=False,
+            ).exclude(lang_group=target_lang_group).count()
+
+        if total_in_group == 0:
+            continue
+
+        target_count = calculate_translation_count(total_in_group, hot_percent)
+
+        # Items already handled (queued, complete, or skipped) — don't re-count
+        already_handled = TrendItem.objects.filter(
+            lang_group=lang_group,
+            hotness__isnull=False,
+            summary_status__in=['queued', 'complete', 'skipped'],
+        ).exclude(lang_group=target_lang_group).count()
+
+        needed = max(0, target_count - already_handled)
+
+        logger.debug(
+            f"lang_group={lang_group}: total={total_in_group}, "
+            f"already_handled={already_handled}, target={target_count}, needed={needed}"
+        )
+
+        if needed == 0:
+            continue
+
+        # Take top N by hotness from the pending pool for this group
+        ids_to_queue = list(
+            base_query.filter(lang_group=lang_group)
+            .order_by('-hotness')
+            .values_list('id', flat=True)[:needed]
+        )
+
+        if not ids_to_queue:
+            continue
+
+        # Safety cap
+        if total_queued + len(ids_to_queue) > limit:
+            ids_to_queue = ids_to_queue[:limit - total_queued]
+
+        updated = TrendItem.objects.filter(id__in=ids_to_queue).update(
+            summary_status='queued'
+        )
+        total_queued += updated
+
+        logger.info(
+            f"lang_group={lang_group}: queued {updated} item(s) for summarization "
+            f"(target={target_count}, total_in_group={total_in_group})"
+        )
+
+        if total_queued >= limit:
+            logger.info(f"Pre-selection hit safety limit ({limit}), stopping early")
+            break
+
+    logger.info(
+        f"Pre-selection complete: {total_queued} item(s) newly queued for summarization"
+    )
+    return total_queued
+
+
 def get_translation_coverage_stats(target_locale: str) -> Dict[str, Any]:
     """
     Get translation coverage statistics for a target locale.

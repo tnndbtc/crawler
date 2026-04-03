@@ -250,6 +250,7 @@ class TrendItem(models.Model):
         default='pending',
         choices=[
             ('pending', 'Pending'),
+            ('queued', 'Queued (selected for translation)'),
             ('complete', 'Complete'),
             ('failed', 'Failed'),
             ('skipped', 'Skipped (no summarizable content)'),

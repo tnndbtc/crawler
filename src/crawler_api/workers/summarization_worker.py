@@ -30,6 +30,7 @@ import django
 from asgiref.sync import sync_to_async
 from django.db.models import Q
 
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
@@ -246,17 +247,34 @@ async def _run_claude(prompt: str) -> str:
 
 async def process_batch(batch_size: int = BATCH_SIZE) -> int:
     """
-    Pick up to batch_size pending items, summarize, write back to description_original.
+    Pick up to batch_size items to summarize, write back to description_original.
+
+    Two categories are processed:
+      1. zh items with summary_status='pending'  — always summarized (user reads
+         these directly in Chinese; no translation step needed).
+      2. Any item with summary_status='queued'   — pre-selected by the translation
+         worker as top X% by hotness; these will be translated to zh-Hans.
+
+    Non-zh items that are still 'pending' (not yet queued) are intentionally
+    ignored — they did not make the hotness cut and will never be translated,
+    so summarizing them would waste LLM calls.
+
+    Items are ordered by hotness DESC so the most important items (highest
+    engagement) are summarized first.
+
     Returns count of processed items.
     """
     items = await sync_to_async(list)(
-        TrendItem.objects.filter(summary_status='pending')
+        TrendItem.objects.filter(
+            Q(lang_group='zh', summary_status='pending') |  # Chinese: always
+            Q(summary_status='queued')                       # Pre-selected: will be translated
+        )
         .select_related('surface')
-        .order_by('-collected_at')[:batch_size]
+        .order_by('-hotness', '-collected_at')[:batch_size]
     )
 
     if not items:
-        logger.debug("No items pending summarization")
+        logger.debug("No items ready for summarization")
         return 0
 
     logger.info(f"Summarizing {len(items)} item(s)")
@@ -307,28 +325,37 @@ async def process_batch(batch_size: int = BATCH_SIZE) -> int:
 
 
 async def retry_failed(batch_size: int = 50) -> int:
-    """Reset failed items to pending every FAILED_RETRY_INTERVAL seconds."""
+    """
+    Reset failed items back to the correct pending state every FAILED_RETRY_INTERVAL.
+
+    - zh items: reset to 'pending'  (summarization worker picks them up directly)
+    - non-zh items: reset to 'queued' (they were pre-selected before failing;
+      reset to queued so the summarization worker retries them without waiting
+      for the next pre-selection pass)
+    """
     global _last_failed_retry_time
     now = time.time()
     if now - _last_failed_retry_time < FAILED_RETRY_INTERVAL:
         return 0
     _last_failed_retry_time = now
 
-    failed = await sync_to_async(list)(
-        TrendItem.objects.filter(summary_status='failed')[:batch_size]
-    )
-    if not failed:
-        return 0
+    zh_count = await sync_to_async(
+        TrendItem.objects.filter(summary_status='failed', lang_group='zh').update
+    )(summary_status='pending')
 
-    count = 0
-    for item in failed:
-        item.summary_status = 'pending'
-        await sync_to_async(item.save)(update_fields=['summary_status'])
-        count += 1
+    non_zh_count = await sync_to_async(
+        TrendItem.objects.filter(summary_status='failed')
+        .exclude(lang_group='zh')
+        .update
+    )(summary_status='queued')
 
-    if count:
-        logger.info(f"♻️  Reset {count} failed summarization(s) to pending")
-    return count
+    total = zh_count + non_zh_count
+    if total:
+        logger.info(
+            f"♻️  Reset {total} failed summarization(s): "
+            f"{zh_count} zh→pending, {non_zh_count} non-zh→queued"
+        )
+    return total
 
 
 async def run_worker_loop():
