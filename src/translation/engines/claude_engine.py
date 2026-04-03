@@ -266,7 +266,8 @@ class ClaudeEngine(BaseTranslationEngine):
             )
         else:
             prompt = (
-                f"Translate each item to {target_locale}. Natural, preserve tone.\n"
+                f"Translate each item to {target_locale}. Natural, preserve tone. "
+                "Keep acronyms (e.g. ACAB) in their original form — do not translate them.\n"
                 "Return JSON array in same order — no other text:\n"
                 '[{"title":"...","description":"..."}, ...]\n\n'
                 + items_text

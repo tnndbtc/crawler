@@ -290,262 +290,77 @@ async def process_display_translations_selective(
     batch_size: int = 10
 ) -> int:
     """
-    Process display translations using selective hotness-based selection.
+    Translate top X% hottest items to target_locale.
 
-    This is the NEW approach that:
-    1. Uses select_items_for_translation() to get top X% hottest items
-    2. Stores translations in ItemDerivation table (not inline fields)
-    3. Checks for existing derivations (idempotency)
-    4. Supports admin-configurable translation percentage
-
-    Args:
-        manager: TranslationManager instance
-        target_locale: Target locale (e.g., 'zh-Hans')
-        batch_size: Number of items to process per batch
-
-    Returns:
-        Number of items processed
+    1. select_items_for_translation() picks the gap needed to reach the X% quota
+    2. Translate in batches of TRANSLATION_BATCH_CHUNK via manager.translate_display_batch()
+    3. Save each result with update_or_create (handles retries of failed items cleanly)
     """
     config = await manager.get_config()
-
     if not config.enable_translation:
         return 0
 
-    # Get selected items using hotness algorithm
-    items = await sync_to_async(select_items_for_translation)(
-        target_locale, batch_size
-    )
-
+    items = await sync_to_async(select_items_for_translation)(target_locale, batch_size)
     if not items:
-        logger.debug(f"No items selected for translation to {target_locale}")
         return 0
 
-    logger.info(
-        f"Processing {len(items)} selected item(s) for translation to {target_locale} "
-        f"(selective mode)"
-    )
+    logger.info(f"Processing {len(items)} selected item(s) for translation to {target_locale}")
 
-    # Inline field names for DUAL-WRITE (backward compatibility)
-    locale_suffix = target_locale.replace('-', '_').lower()
-    title_field = f'display_title_{locale_suffix}'
-    description_field = f'display_description_{locale_suffix}'
-    status_field = f'display_status_{locale_suffix}'
-    engine_field = f'display_engine_{locale_suffix}'
-    error_field = f'display_error_{locale_suffix}'
+    processed = 0
 
-    processed_count = 0
-
-    # -----------------------------------------------------------------------
-    # First pass: collect item data and filter out already-translated items
-    # -----------------------------------------------------------------------
-    candidates = []  # list of (item, item_data)
-
-    for item in items:
-        try:
-            def get_item_data(i=item):
-                return {
-                    'item_id': i.id,
-                    'base_lang': i.base_lang,
-                    'hotness': i.hotness,
-                    'title': i.title_original,
-                    'description': i.description_original,
-                    'source_locale': i.original_locale,
-                    'source_platform': i.surface.platform if i.surface else '',
-                    'region': i.region.key if i.region else '',
-                }
-
-            item_data = await sync_to_async(get_item_data)()
-
-            derivation_exists = await sync_to_async(
-                ItemDerivation.objects.filter(
-                    item=item,
-                    derivation_type='translation',
-                    target_locale=target_locale
-                ).exists
-            )()
-
-            if derivation_exists:
-                logger.debug(
-                    f"⏭️  Skipping item #{item_data['item_id']}: derivation already exists"
-                )
-                continue
-
-            logger.debug(
-                f"📝 Selective translation: item #{item_data['item_id']} | "
-                f"{item_data['base_lang']} → {target_locale} | "
-                f"hotness={item_data['hotness']:.2f}"
-            )
-
-            candidates.append((item, item_data))
-
-        except Exception as e:
-            try:
-                item_id = item.id
-            except Exception:
-                item_id = '?'
-            logger.error(
-                f"Error collecting data for item #{item_id}: {e}", exc_info=True
-            )
-
-    if not candidates:
-        return processed_count
-
-    # -----------------------------------------------------------------------
-    # Batch translate: chunks of TRANSLATION_BATCH_CHUNK items per claude -p call
-    # -----------------------------------------------------------------------
-    all_results: dict = {}  # item_id → TranslationResult
-
-    for chunk in _chunks(candidates, TRANSLATION_BATCH_CHUNK):
+    for chunk in _chunks(items, TRANSLATION_BATCH_CHUNK):
         batch_input = [
             {
-                'title': d['title'],
-                'description': d['description'],
-                'source_locale': d['source_locale'],
-                'platform': d['source_platform'],
-                'region': d['region'],
+                'title': item.title_original,
+                'description': item.description_original,
+                'source_locale': item.original_locale,
+                'platform': item.surface.platform if item.surface else '',
+                'region': item.region.key if item.region else '',
             }
-            for _, d in chunk
+            for item in chunk
         ]
 
         try:
-            chunk_results = await manager.translate_display_batch(batch_input, target_locale)
-            for (item, item_data), result in zip(chunk, chunk_results):
-                all_results[item_data['item_id']] = result
+            results = await manager.translate_display_batch(batch_input, target_locale)
         except Exception as e:
-            logger.error(f"Chunk batch translation error: {e}", exc_info=True)
-            # Fall back to individual calls for each item in this chunk
-            for item, item_data in chunk:
-                try:
-                    result = await manager.translate_display(
-                        title=item_data['title'],
-                        description=item_data['description'],
-                        source_locale=item_data['source_locale'],
-                        target_locale=target_locale,
-                        source_platform=item_data['source_platform'],
-                        region=item_data['region'],
-                    )
-                    all_results[item_data['item_id']] = result
-                except Exception as e2:
-                    logger.error(
-                        f"Individual translation fallback failed for "
-                        f"item #{item_data['item_id']}: {e2}"
-                    )
+            logger.error(f"Batch translation error: {e}", exc_info=True)
+            results = [None] * len(chunk)
 
-    # -----------------------------------------------------------------------
-    # Second pass: save results
-    # -----------------------------------------------------------------------
-    for item, item_data in candidates:
-        try:
-            result = all_results.get(item_data['item_id'])
-
-            if result is None:
-                logger.warning(
-                    f"No translation result for item #{item_data['item_id']}, marking failed"
-                )
-                await sync_to_async(ItemDerivation.objects.get_or_create)(
-                    item=item,
-                    derivation_type='translation',
-                    target_locale=target_locale,
-                    defaults={
-                        'content_title': '', 'content_body': '',
-                        'engine': 'error', 'status': 'failed',
-                        'error_message': 'no result returned'
-                    }
-                )
-                processed_count += 1
-                continue
-
-            if result.success:
-                derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
-                    item=item,
-                    derivation_type='translation',
-                    target_locale=target_locale,
-                    defaults={
-                        'content_title': result.title,
-                        'content_body': result.description,
-                        'engine': result.engine,
-                        'status': 'complete'
-                    }
-                )
-
-                if created:
-                    logger.info(
-                        f"✅ Selective translation complete: item #{item_data['item_id']} → {target_locale} | "
-                        f"engine: {result.engine}, hotness: {item_data['hotness']:.2f}"
-                    )
-
-                    # DUAL-WRITE: Also update inline fields for backward compatibility
-                    # This can be removed in Phase C (cleanup) after validation
-                    if hasattr(TrendItem, title_field):
-                        setattr(item, title_field, result.title)
-                        setattr(item, description_field, result.description)
-                        setattr(item, status_field, 'complete')
-                        setattr(item, engine_field, result.engine)
-                        setattr(item, error_field, None)
-                        await sync_to_async(item.save)(
-                            update_fields=[
-                                title_field, description_field,
-                                status_field, engine_field, error_field
-                            ]
-                        )
-                        logger.debug(f"  (also updated inline fields for compatibility)")
-                else:
-                    logger.debug(
-                        f"⏭️  Translation already exists: item #{item_data['item_id']} → {target_locale} (race condition)"
-                    )
-
-            elif result.engine in ('system_stopped', 'none_available'):
-                logger.info(
-                    f"⏸️ Selective translation skipped (providers unavailable): item #{item_data['item_id']}"
-                )
-                continue  # Do not increment processed_count
-
-            else:
-                derivation, created = await sync_to_async(ItemDerivation.objects.get_or_create)(
-                    item=item,
-                    derivation_type='translation',
-                    target_locale=target_locale,
-                    defaults={
-                        'content_title': '',
-                        'content_body': '',
-                        'engine': result.engine or 'unknown',
-                        'status': 'failed',
-                        'error_message': result.error
-                    }
-                )
-
-                if created:
-                    logger.warning(
-                        f"❌ Selective translation failed: item #{item_data['item_id']} | "
-                        f"error: {result.error}"
-                    )
-                else:
-                    logger.debug(
-                        f"⏭️  Failed translation already recorded: item #{item_data['item_id']} → {target_locale}"
-                    )
-
-            processed_count += 1
-
-        except Exception as e:
-            logger.error(
-                f"Error saving result for item #{item_data['item_id']}: {e}",
-                exc_info=True
-            )
+        for item, result in zip(chunk, results):
             try:
-                await sync_to_async(ItemDerivation.objects.get_or_create)(
+                if result is None:
+                    status, title, body, engine, error = 'failed', '', '', 'error', 'no result returned'
+                elif result.engine in ('system_stopped', 'none_available'):
+                    continue  # providers down — skip, retry next cycle
+                elif result.success:
+                    status, title, body, engine, error = 'complete', result.title, result.description, result.engine, None
+                else:
+                    status, title, body, engine, error = 'failed', '', '', result.engine or 'unknown', result.error
+
+                await sync_to_async(ItemDerivation.objects.update_or_create)(
                     item=item,
                     derivation_type='translation',
                     target_locale=target_locale,
                     defaults={
-                        'content_title': '', 'content_body': '',
-                        'engine': 'error', 'status': 'failed',
-                        'error_message': str(e)
+                        'content_title': title,
+                        'content_body': body,
+                        'engine': engine,
+                        'status': status,
+                        'error_message': error,
                     }
                 )
-            except Exception:
-                pass  # Best effort
 
-    return processed_count
+                if status == 'complete':
+                    logger.info(f"✅ Translated item #{item.id} → {target_locale} ({engine})")
+                else:
+                    logger.warning(f"❌ Failed item #{item.id}: {error}")
+
+                processed += 1
+
+            except Exception as e:
+                logger.error(f"Error saving result for item #{item.id}: {e}", exc_info=True)
+
+    return processed
 
 
 async def mark_english_items_as_skipped(batch_size: int = 100) -> int:
