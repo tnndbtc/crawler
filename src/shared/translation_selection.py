@@ -8,8 +8,10 @@ pre_select_items_for_summarization(): Queue unsummarized items above the cutoff 
 """
 
 import logging
+from datetime import timedelta
 from typing import List, Dict, Any, Optional
 from django.db.models import Exists, OuterRef
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -41,28 +43,37 @@ def get_translation_settings() -> Dict[str, Any]:
     }
 
 
+HOTNESS_WINDOW_HOURS = 24  # Rolling window for hotness cutoff calculation
+
+
 def get_hotness_cutoff(lang_group: str, hot_percent: int) -> Optional[float]:
     """
-    Return the minimum hotness value for items in the top hot_percent% of lang_group.
+    Return the minimum hotness value for items in the top hot_percent% of lang_group,
+    computed within a 24-hour rolling window.
 
-    This is the single shared implementation used by both summarization pre-selection
-    and translation selection. Every locale uses this same logic.
+    Using a rolling window ensures new posts compete only against recent posts,
+    not all historical items. This is the single shared implementation used by
+    both summarization pre-selection and translation selection.
 
-    Returns None if no items exist for this lang_group.
+    Returns None if no items exist in the window for this lang_group.
     """
     from crawler_admin.models import TrendItem
 
-    total = TrendItem.objects.filter(
+    since = timezone.now() - timedelta(hours=HOTNESS_WINDOW_HOURS)
+
+    window = TrendItem.objects.filter(
         lang_group=lang_group,
-        hotness__isnull=False
-    ).count()
+        hotness__isnull=False,
+        collected_at__gte=since,
+    )
+
+    total = window.count()
     if total == 0:
         return None
 
     target = max(1, int(total * hot_percent / 100))
     cutoff_qs = list(
-        TrendItem.objects.filter(lang_group=lang_group, hotness__isnull=False)
-        .order_by('-hotness')
+        window.order_by('-hotness')
         .values_list('hotness', flat=True)[target - 1:target]
     )
     return cutoff_qs[0] if cutoff_qs else None
