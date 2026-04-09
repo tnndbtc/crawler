@@ -5,4 +5,34 @@
 {{ pool_size_banner }}
 {% endif %}
 {{ block.super }}
+
+<style>
+  /* Hide the original object-tools (ADD button) from its default position */
+  #content-main > .object-tools {
+    display: none;
+  }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Move the ADD button next to the search bar
+    var objectTools = document.querySelector('#content-main > .object-tools');
+    var searchbar = document.querySelector('#changelist-search');
+    if (objectTools && searchbar) {
+      // Make search bar container flex so button sits next to it
+      searchbar.style.display = 'flex';
+      searchbar.style.alignItems = 'center';
+      searchbar.style.gap = '10px';
+      searchbar.style.flexWrap = 'wrap';
+
+      // Restyle the object-tools list to sit inline
+      objectTools.style.display = 'inline-flex';
+      objectTools.style.margin = '0';
+      objectTools.style.padding = '0';
+      objectTools.style.float = 'none';
+
+      // Move it into the search bar row
+      searchbar.appendChild(objectTools);
+    }
+  });
+</script>
 {% endblock %}
