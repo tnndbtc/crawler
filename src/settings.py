@@ -133,6 +133,12 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
         },
+        'audit_file': {
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'audit.log'),
+            'formatter': 'verbose',
+            'level': 'WARNING',
+        },
     },
     'root': {
         'handlers': ['console'],
@@ -152,6 +158,11 @@ LOGGING = {
         'crawler_api': {
             'handlers': ['console'],
             'level': LOG_LEVEL,
+            'propagate': False,
+        },
+        'audit': {
+            'handlers': ['console', 'audit_file'],
+            'level': 'WARNING',
             'propagate': False,
         },
     },

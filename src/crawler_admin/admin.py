@@ -13,7 +13,7 @@ Note: TranslationSettings has been removed. Use translation.models.TranslationCo
 
 from django.contrib import admin
 from django.db.models import Q, Count, Exists, OuterRef
-from django.utils.html import format_html
+from django.utils.html import format_html, mark_safe
 from django.utils import timezone
 from .models import (
     Region,
@@ -64,6 +64,28 @@ class MissingCanonicalTranslationFilter(admin.SimpleListFilter):
             return queryset.filter(
                 Exists(has_en_translation)
             )
+        return queryset
+
+
+class AllocationConfigFilter(admin.SimpleListFilter):
+    """Filter surfaces by floor/cap allocation configuration."""
+    title = 'Allocation Config'
+    parameter_name = 'allocation'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('has_floor', 'Has floor (floor_percent > 0)'),
+            ('has_cap',   'Has cap (cap_percent set)'),
+            ('default',   'All defaults (no floor, no cap)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'has_floor':
+            return queryset.filter(floor_percent__gt=0)
+        if self.value() == 'has_cap':
+            return queryset.filter(cap_percent__isnull=False)
+        if self.value() == 'default':
+            return queryset.filter(floor_percent=0, cap_percent__isnull=True)
         return queryset
 
 
@@ -135,6 +157,7 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
         'platform',
         'bucket',
         'bucket_weight',
+        'allocation_summary',
         'health_status',
         'last_run_display',
         'last_success_display',
@@ -146,6 +169,7 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
         'platform',
         'surface_type',
         'bucket',
+        AllocationConfigFilter,
         SurfaceHealthFilter,
     ]
     search_fields = ['key', 'platform', 'entrypoint']
@@ -161,6 +185,15 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
         }),
         ('Collector Settings', {
             'fields': ('entrypoint', 'enabled', 'poll_interval_seconds', 'max_items_per_run')
+        }),
+        ('Selection Allocation', {
+            'fields': ('floor_percent', 'cap_percent'),
+            'description': (
+                'Percentages of this surface\'s lang_group top-N% pool size (rolling 24h window). '
+                'floor_percent: guaranteed minimum — bypasses hotness cutoff (0 = no floor). '
+                'cap_percent: maximum across floor + competition combined (None = uncapped). '
+                'Example: pool=20, floor=10%, cap=30% → at least 2, at most 6 items per cycle.'
+            )
         }),
         ('Configuration', {
             'fields': ('config_json', 'last_cursor'),
@@ -207,6 +240,73 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
             return timezone.localtime(obj.last_success_at).strftime('%Y-%m-%d %H:%M')
         return '-'
     last_success_display.short_description = 'Last Success'
+
+    def allocation_summary(self, obj):
+        """Display floor/cap allocation config as a compact string."""
+        parts = []
+        if obj.floor_percent > 0:
+            parts.append(f'floor={obj.floor_percent}%')
+        if obj.cap_percent is not None:
+            parts.append(f'cap={obj.cap_percent}%')
+        return ' / '.join(parts) if parts else '—'
+    allocation_summary.short_description = 'Allocation'
+
+    def changelist_view(self, request, extra_context=None):
+        """Add lang group pool size banner above the surface list."""
+        extra_context = extra_context or {}
+        extra_context['pool_size_banner'] = self._build_pool_size_banner()
+        return super().changelist_view(request, extra_context=extra_context)
+
+    def _build_pool_size_banner(self):
+        """Build HTML banner showing pool sizes for all active lang groups."""
+        from shared.translation_selection import (
+            get_translation_settings,
+            get_lang_group_pool_size,
+        )
+
+        settings = get_translation_settings()
+        global_pct = settings['hot_percent']
+        locale_pcts = settings.get('hot_percent_by_locale', {})
+
+        # Get all lang_groups that have items in the 24h window
+        since = timezone.now() - timezone.timedelta(hours=24)
+        lang_groups = (
+            TrendItem.objects
+            .filter(collected_at__gte=since, lang_group__isnull=False)
+            .values_list('lang_group', flat=True)
+            .distinct()
+            .order_by('lang_group')
+        )
+
+        rows = []
+        for lg in lang_groups:
+            pct = locale_pcts.get(lg, global_pct)
+            pool = get_lang_group_pool_size(lg, pct)
+            total = TrendItem.objects.filter(
+                lang_group=lg, collected_at__gte=since,
+            ).count()
+            rows.append(
+                f'<span style="display:inline-block;margin:2px 12px 2px 0;">'
+                f'<strong>{lg}</strong>: {pool} hot / {total} total (top {pct}%)'
+                f'</span>'
+            )
+
+        if not rows:
+            return mark_safe(
+                '<div style="background:#f0f0f0;padding:10px 14px;margin-bottom:10px;'
+                'border-radius:4px;color:#666;">'
+                'No items in the 24h window yet — pool sizes will appear after crawling.'
+                '</div>'
+            )
+
+        return mark_safe(
+            '<div style="background:#e8f4fd;padding:10px 14px;margin-bottom:10px;'
+            'border-radius:4px;border:1px solid #b8daff;">'
+            '<div style="font-weight:bold;margin-bottom:6px;">'
+            '📊 Lang Group Pool Sizes (24h window)</div>'
+            + ''.join(rows)
+            + '</div>'
+        )
 
     @admin.action(description='Enable selected surfaces')
     def enable_surfaces(self, request, queryset):

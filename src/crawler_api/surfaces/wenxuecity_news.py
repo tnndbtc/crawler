@@ -61,21 +61,35 @@ async def fetch_article_body(
     client: RateLimitedClient,
     url: str,
     headers: dict,
-) -> Optional[str]:
+) -> Tuple[Optional[str], int]:
     """
-    Fetch a Wenxuecity article page and extract the main body text.
+    Fetch a Wenxuecity article page and extract the main body text and comment count.
 
     Tries multiple CSS selectors in order; falls back to joining all <p> tags
     inside the page body if none match.
 
-    Returns up to ARTICLE_BODY_MAX_CHARS of plain text, or None on failure.
+    Comment count extracted from: <a class="morecomment">查看评论(N)</a>
+    Confirmed via live crawl on 2026-04-08.
+
+    Returns:
+        (body_text, comment_count) — body_text is None on failure; comment_count
+        is 0 if the element is absent or unparseable.
     """
     try:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Try known selectors first
+        # Extract comment count from <a class="morecomment">查看评论(N)</a>
+        comment_count = 0
+        comment_elem = soup.select_one('a.morecomment')
+        if comment_elem:
+            text = comment_elem.get_text(strip=True)
+            match = re.search(r'\d+', text)
+            if match:
+                comment_count = int(match.group())
+
+        # Try known selectors first for article body
         body_elem = None
         for selector in ARTICLE_BODY_SELECTORS:
             body_elem = soup.select_one(selector)
@@ -92,13 +106,13 @@ async def fetch_article_body(
         text = text.strip()
         if len(text) < 50:
             # Too short — probably failed to find real content
-            return None
+            return None, comment_count
 
-        return text[:ARTICLE_BODY_MAX_CHARS]
+        return text[:ARTICLE_BODY_MAX_CHARS], comment_count
 
     except Exception as e:
         logger.debug(f"Could not fetch article body from {url}: {e}")
-        return None
+        return None, 0
 
 
 def extract_date_from_url(url: str) -> Optional[datetime]:
@@ -197,14 +211,19 @@ async def collect(
                         # Fallback to current time if date cannot be extracted
                         published_at = datetime.now(timezone.utc)
 
-                    # Fetch article body for top-ranked articles
-                    # Gives the summarization worker real content to work with
+                    # Fetch article body + comment count for top-ranked articles.
+                    # Comment count feeds into hotness (comments × 2.0 weight).
+                    # For rank 21+, skip fetch — engagement_signals gets comments=0.
                     article_body = None
+                    comment_count = 0
                     if idx < ARTICLE_BODY_FETCH_LIMIT:
-                        article_body = await fetch_article_body(client, full_url, headers)
+                        article_body, comment_count = await fetch_article_body(
+                            client, full_url, headers
+                        )
                         if article_body:
                             logger.debug(
-                                f"Fetched article body for rank {idx+1}: {len(article_body)} chars"
+                                f"Fetched article body for rank {idx+1}: "
+                                f"{len(article_body)} chars, comments={comment_count}"
                             )
                         # Small delay to be polite between article fetches
                         await asyncio.sleep(0.5)
@@ -225,13 +244,15 @@ async def collect(
                         author=None,
                         published_at=published_at,
                         rank_position=idx + 1,
-                        engagement_signals={},  # No metrics in listing
+                        engagement_signals={"comments": comment_count},
                         locale=locale,
                         raw_payload={
                             "source_name": "文学城",
                             "language": "zh-Hans",
                             "content_type": "news",
                             "article_body": article_body,  # Preserved even after summary overwrites description_original
+                            "comment_count": comment_count,
+                            "comment_count_source": "article_page" if idx < ARTICLE_BODY_FETCH_LIMIT else "not_fetched",
                         }
                     )
 

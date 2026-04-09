@@ -1081,6 +1081,52 @@ run_migrations() {
     echo ""
 }
 
+create_db_user() {
+    print_header "Create DB User"
+
+    if [ ! -f "$DB_FILE" ]; then
+        print_error "Database not found. Run migrations first."
+        return 1
+    fi
+
+    cd "$SCRIPT_DIR"
+
+    # Check if any superuser already exists
+    existing=$(python3 -c "
+import os, sys, django
+sys.path.insert(0, 'src')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+django.setup()
+from django.contrib.auth.models import User
+print(User.objects.filter(is_superuser=True).count())
+" 2>/dev/null)
+
+    if [ "$existing" -gt "0" ]; then
+        print_info "There is already $existing superuser(s) in the database."
+        echo ""
+        echo -e "${BOLD}Create another one anyway? (yes/no):${NC}"
+        read -p "> " confirm
+        if [ "$confirm" != "yes" ]; then
+            print_info "Cancelled."
+            echo ""
+            return 0
+        fi
+    fi
+
+    echo ""
+    print_step "Creating superuser..."
+    print_info "You will be prompted for username, email, and password."
+    echo ""
+    python3 manage.py createsuperuser
+
+    if [ $? -eq 0 ]; then
+        print_success "DB user created successfully!"
+    else
+        print_error "Failed to create user."
+    fi
+    echo ""
+}
+
 reset_database() {
     print_header "Reset Database"
 
@@ -1096,10 +1142,10 @@ reset_database() {
     echo ""
     print_warning "A backup will be created before deletion."
     echo ""
-    echo -e "${BOLD}${RED}Type 'yes' to confirm and press Enter (or anything else to cancel):${NC}"
+    echo -e "${BOLD}${RED}To confirm, type the database filename 'db.sqlite3' and press Enter:${NC}"
     read -p "> " confirmation
 
-    if [ "$confirmation" != "yes" ]; then
+    if [ "$confirmation" != "db.sqlite3" ]; then
         print_info "Database reset cancelled"
         echo ""
         return 1
@@ -1612,7 +1658,8 @@ for lg in LOCALES:
         continue
     ready = TrendItem.objects.filter(
         lang_group=lg,
-        summary_status__in=['complete','skipped']
+        summary_status__in=['complete','skipped'],
+        display_status_zh_hans='pending'
     ).exclude(Exists(has_translation)).count()
     done = ItemDerivation.objects.filter(
         item__lang_group=lg,
@@ -1664,10 +1711,11 @@ EOF
     echo "  11) Backup Database"
     echo "  12) Restore Database"
     echo "  13) Reset Database (destructive!)"
+    echo "  14) Create DB User"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
-    echo "  14) Run Tests"
+    echo "  15) Run Tests"
     echo ""
 
     echo "  0)  Exit"
@@ -1694,7 +1742,8 @@ main_loop() {
             11) backup_database ;;
             12) restore_database ;;
             13) reset_database ;;
-            14) test_menu ;;
+            14) create_db_user ;;
+            15) test_menu ;;
             0)
                 echo ""
                 print_info "Exiting..."

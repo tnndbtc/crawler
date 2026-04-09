@@ -146,6 +146,22 @@ class TrendSurface(models.Model):
         default=200,
         help_text="Maximum items to collect per execution"
     )
+    floor_percent = models.IntegerField(
+        default=0,
+        help_text=(
+            "Floor guarantee: % of this surface's lang_group top-N% pool size "
+            "that is guaranteed per selection cycle (0 = no floor, pure competition)"
+        )
+    )
+    cap_percent = models.IntegerField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Cap: max % of lang_group top-N% pool this surface can occupy per cycle "
+            "(floor + competition combined). None = uncapped."
+        )
+    )
     config_json = models.JSONField(
         default=dict,
         blank=True,

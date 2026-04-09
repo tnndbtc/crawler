@@ -110,7 +110,7 @@ def _seed_translation(translation):
         config.fallback_order = translation['fallback_order']
         changed = True
 
-    target_locales = translation.get('target_locales', ['en', 'zh-Hans'])
+    target_locales = translation.get('target_locales', ['zh-Hans'])
     if config.enabled_locales != target_locales:
         config.enabled_locales = target_locales
         changed = True
@@ -127,11 +127,22 @@ def _seed_translation(translation):
     # Seed SystemSettings
     from crawler_admin.models import SystemSettings
 
+    global_hot_percent = translation.get('hot_percent', 2)
+
     settings_map = {
-        'translation_hot_percent': (translation.get('hot_percent', 10), 'integer', 'Top X% hottest items to translate per language group'),
+        'translation_hot_percent': (global_hot_percent, 'integer', 'Top X% hottest items to translate per language group (global fallback)'),
         'translation_target_locales': (target_locales, 'json', 'Target locales for display translation'),
         'translation_source_langs': (translation.get('source_langs', []), 'json', 'Source languages (empty=ALL)'),
     }
+
+    # Per-lang-group overrides: translation_hot_percent_<lang>
+    hot_percent_by_lang = translation.get('hot_percent_by_lang', {})
+    for lang, pct in hot_percent_by_lang.items():
+        settings_map[f'translation_hot_percent_{lang}'] = (
+            pct,
+            'integer',
+            f'Top X% hottest items to translate for lang_group={lang} (overrides global)',
+        )
 
     for key, (value, vtype, desc) in settings_map.items():
         _, created = SystemSettings.objects.get_or_create(
