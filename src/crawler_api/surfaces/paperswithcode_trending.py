@@ -1,13 +1,12 @@
 """
-Papers With Code Trending surface collector.
+Papers With Code / Hugging Face Trending Papers surface collector.
 
-Fetches trending ML papers from paperswithcode.com/latest.
-Lists new ML papers with GitHub stars and trending scores. No auth required.
+Fetches trending ML papers from Hugging Face's papers page.
+(paperswithcode.com/latest now redirects to huggingface.co/papers/trending)
 
-NOTE: Site layout changes occasionally. Lower priority surface — run a live
-selector test if selectors stop returning results.
+No auth required. Scrapes public page for paper titles and links.
 
-URL: https://paperswithcode.com/latest
+URL: https://huggingface.co/papers/trending
 
 Surface type: ranking
 Bucket: category_tech
@@ -26,7 +25,8 @@ from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
-PAPERSWITHCODE_URL = "https://paperswithcode.com/latest"
+# paperswithcode.com/latest redirects here
+PAPERS_URL = "https://huggingface.co/papers/trending"
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -36,21 +36,8 @@ DEFAULT_HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Referer": "https://paperswithcode.com/",
+    "Referer": "https://huggingface.co/",
 }
-
-
-def _parse_stars(text: str) -> int:
-    """Parse GitHub star count from badge text like '1.2k' or '340'."""
-    text = text.strip().lower().replace(",", "")
-    if not text:
-        return 0
-    try:
-        if text.endswith("k"):
-            return int(float(text[:-1]) * 1000)
-        return int(text)
-    except ValueError:
-        return 0
 
 
 async def collect(
@@ -59,12 +46,10 @@ async def collect(
     limit: int
 ) -> Tuple[List[CollectedItem], Optional[str]]:
     """
-    Collect trending ML papers from Papers With Code.
+    Collect trending ML papers from Hugging Face.
 
-    Scrapes the public /latest page. No authentication required.
-    Primary selectors (in order of preference):
-      1. div.paper-card
-      2. div.row > div.col-lg-9
+    Scrapes the public /papers/trending page. No authentication required.
+    Finds paper links matching /papers/{arxiv_id} pattern and extracts titles.
 
     Config params (from TrendSurface.config_json):
         None required.
@@ -80,10 +65,10 @@ async def collect(
     Raises:
         httpx.HTTPError: On request failures
     """
-    logger.info("Fetching Papers With Code trending papers...")
+    logger.info("Fetching trending papers from Hugging Face...")
 
     async with RateLimitedClient(timeout=30.0) as client:
-        response = await client.get(PAPERSWITHCODE_URL, headers=DEFAULT_HEADERS)
+        response = await client.get(PAPERS_URL, headers=DEFAULT_HEADERS)
         response.raise_for_status()
         html = response.text
 
@@ -92,67 +77,49 @@ async def collect(
     seen_urls: set = set()
     rank = 0
 
-    # Primary selector 1: div.paper-card
-    cards = soup.select("div.paper-card")
+    # Find all paper links: <a href="/papers/XXXX.XXXXX">paper title</a>
+    for a_tag in soup.select('a[href*="/papers/"]'):
+        if rank >= limit:
+            break
 
-    # Primary selector 2: div.row > div.col-lg-9
-    if not cards:
-        cards = soup.select("div.row > div.col-lg-9")
+        href = a_tag.get("href", "")
+        # Only match actual paper IDs (e.g., /papers/2508.19205), not /papers/trending
+        if not href or "/papers/trending" in href or "/papers/new" in href:
+            continue
+        # Must look like an arxiv ID path
+        parts = href.rstrip("/").split("/")
+        if len(parts) < 3 or not any(c.isdigit() for c in parts[-1]):
+            continue
 
-    if cards:
-        for card in cards:
-            if rank >= limit:
-                break
+        title = a_tag.get_text(strip=True)
+        if not title or len(title) < 10:
+            continue
 
-            # Title from h1 or h2 inside card
-            title_tag = card.select_one("h1") or card.select_one("h2")
-            if not title_tag:
-                continue
-            title = title_tag.get_text(strip=True)
-            if not title or len(title) < 5:
-                continue
+        url = urljoin("https://huggingface.co", href)
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
 
-            # URL from the first link in the card
-            a_tag = card.select_one("a")
-            if not a_tag:
-                continue
-            href = a_tag.get("href", "")
-            if not href:
-                continue
-            url = urljoin("https://paperswithcode.com", href)
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
+        rank += 1
 
-            # GitHub stars from badge
-            star_badge = card.select_one("span.badge-secondary")
-            github_stars = 0
-            if star_badge:
-                github_stars = _parse_stars(star_badge.get_text(strip=True))
-
-            rank += 1
-
-            items.append({
-                "external_id": f"pwc_{rank}",
+        items.append({
+            "external_id": f"pwc_{parts[-1]}",
+            "title": title,
+            "url": url,
+            "locale": "en-US",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "rank_position": rank,
+            "engagement_signals": {
+                "rank_position": rank,
+            },
+            "raw_payload": {
+                "rank": rank,
                 "title": title,
                 "url": url,
-                "locale": "en-US",
-                "published_at": datetime.now(timezone.utc).isoformat(),
-                "rank_position": rank,
-                "engagement_signals": {
-                    "github_stars": github_stars,
-                    "rank_position": rank,
-                },
-                "raw_payload": {
-                    "rank": rank,
-                    "title": title,
-                    "url": url,
-                    "github_stars": github_stars,
-                    "source": "paperswithcode_trending",
-                },
-            })
-    else:
-        logger.warning("Papers With Code: no cards found — selectors may need updating")
+                "arxiv_id": parts[-1],
+                "source": "paperswithcode_trending",
+            },
+        })
 
-    logger.info(f"Collected {len(items)} trending papers from Papers With Code")
+    logger.info(f"Collected {len(items)} trending papers from Hugging Face")
     return items, None

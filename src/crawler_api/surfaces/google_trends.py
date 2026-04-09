@@ -1,30 +1,33 @@
 """
 Google Trends surface collector.
 
-Collects trending search queries and topics from Google Trends using
-the pytrends library (unofficial Google Trends API).
+Collects trending search queries from Google Trends via the public RSS feed.
+No API key or library dependency required.
 
-Fetches both:
-1. Daily trending searches (most searched topics of the day)
-2. Realtime trends (currently trending topics)
+RSS endpoint:
+  https://trends.google.com/trending/rss?geo={GEO}
 
 Schedule: Every 3 hours
 Max items: 20-30
 
 Surface type: trending
 Bucket: hot_now (real-time trending searches)
-
-Migrated from: /home/tnnd/data/code/trend/trend_agent/ingestion/plugins/google_trends.py
 """
 
-import asyncio
 import logging
+from io import BytesIO
 from typing import Optional, Tuple, List
 from datetime import datetime, timezone
+from urllib.parse import quote_plus
+
+import feedparser
 
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
+
+GOOGLE_TRENDS_RSS_BASE = "https://trends.google.com/trending/rss"
 
 
 async def collect(
@@ -33,231 +36,86 @@ async def collect(
     limit: int
 ) -> Tuple[List[CollectedItem], Optional[str]]:
     """
-    Collect trending search queries from Google Trends.
-
-    This collector uses pytrends (unofficial Google Trends API) to fetch both
-    daily trending searches and realtime trending searches.
+    Collect trending search queries from Google Trends RSS feed.
 
     Config params (from TrendSurface.config_json):
         - geo: Geographic location code (default: 'US')
         - locale: Locale code (default: 'en-US')
-        - max_daily: Max daily trending searches to fetch (default: 20)
-        - max_realtime: Max realtime trends to fetch (default: 10)
-        - include_realtime: Whether to include realtime trends (default: True)
 
     Args:
         config: Surface configuration
-        cursor: Not used (Google Trends doesn't support pagination)
+        cursor: Not used (Google Trends provides current trends only)
         limit: Maximum items to collect
 
     Returns:
-        (items, next_cursor)
-
-    Note:
-        Cursor is always None since Google Trends provides current trends only,
-        not historical pagination.
-
-    Raises:
-        ImportError: If pytrends is not installed
-        Exception: On Google Trends API errors
+        (items, None) — no pagination cursor
     """
-    # Parse config
     geo = config.get('geo', 'US')
     locale = config.get('locale', 'en-US')
-    max_daily = config.get('max_daily', min(limit, 20))
-    max_realtime = config.get('max_realtime', 10)
-    include_realtime = config.get('include_realtime', True)
 
-    logger.info(f"Collecting Google Trends: geo={geo}, daily={max_daily}, realtime={max_realtime}")
+    rss_url = f"{GOOGLE_TRENDS_RSS_BASE}?geo={geo}"
 
-    try:
-        # Import pytrends (lazy import in case it's not installed)
-        from pytrends.request import TrendReq
-    except ImportError:
-        raise ImportError(
-            "pytrends library not installed. Install with: pip install pytrends"
-        )
+    logger.info(f"Collecting Google Trends RSS: geo={geo}, url={rss_url}")
 
-    try:
-        # Initialize pytrends
-        pytrends = TrendReq(hl=locale, tz=360, timeout=(10, 25))
+    async with RateLimitedClient(timeout=30.0) as client:
+        response = await client.get(rss_url, headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml",
+        })
+        response.raise_for_status()
+        feed = feedparser.parse(BytesIO(response.content))
 
-        items: List[CollectedItem] = []
+    if feed.get('bozo', False):
+        logger.warning(f"Google Trends RSS feed parse warning: {feed.get('bozo_exception', '')}")
 
-        # Fetch daily trending searches
-        daily_items = await fetch_daily_trends(
-            pytrends=pytrends,
-            geo=geo,
-            locale=locale,
-            max_trends=max_daily,
-            start_rank=1
-        )
-        items.extend(daily_items)
+    entries = feed.get('entries', [])
+    logger.info(f"Google Trends RSS returned {len(entries)} entries for geo={geo}")
 
-        # Fetch realtime trends if enabled
-        if include_realtime:
-            realtime_items = await fetch_realtime_trends(
-                pytrends=pytrends,
-                geo=geo,
-                locale=locale,
-                max_trends=max_realtime,
-                start_rank=len(items) + 1
-            )
-            items.extend(realtime_items)
+    items: List[CollectedItem] = []
 
-        logger.info(f"Collected {len(items)} trends from Google Trends")
+    for idx, entry in enumerate(entries[:limit]):
+        title = entry.get('title', '').strip()
+        if not title:
+            continue
 
-        # Google Trends doesn't support pagination
-        return items, None
+        # Use the entry link if available, otherwise construct a Trends URL
+        link = entry.get('link', '')
+        if not link:
+            link = f"https://trends.google.com/trends/explore?q={quote_plus(title)}&geo={geo}"
 
-    except Exception as e:
-        logger.error(f"Error collecting from Google Trends: {e}", exc_info=True)
-        raise
+        # Extract traffic estimate from ht:approx_traffic if available
+        traffic = entry.get('ht_approx_traffic', '') or entry.get('ht_picture', '')
 
+        # Extract description
+        description = entry.get('summary', '') or entry.get('description', '')
 
-async def fetch_daily_trends(
-    pytrends,
-    geo: str,
-    locale: str,
-    max_trends: int,
-    start_rank: int = 1
-) -> List[CollectedItem]:
-    """
-    Fetch daily trending searches from Google Trends.
+        item: CollectedItem = {
+            "external_id": f"google_trends_{geo}_{idx}_{datetime.now(timezone.utc).strftime('%Y%m%d')}",
+            "title": title,
+            "url": link,
+            "locale": locale,
+            "rank_position": idx + 1,
+            "engagement_signals": {
+                "score": float(limit - idx),
+            },
+            "raw_payload": {
+                "query": title,
+                "geo": geo,
+                "rank": idx + 1,
+                "traffic": traffic,
+                "source_type": "daily_trends",
+                "source_name": "Google Trends",
+            },
+        }
 
-    Args:
-        pytrends: TrendReq instance
-        geo: Geographic location code
-        locale: Locale code
-        max_trends: Maximum trends to fetch
-        start_rank: Starting rank position
+        if description:
+            item["description"] = description[:2000]
 
-    Returns:
-        List of CollectedItem dicts
-    """
-    try:
-        # Run synchronous pytrends method in executor
-        loop = asyncio.get_event_loop()
-        df = await loop.run_in_executor(
-            None,
-            pytrends.trending_searches,
-            geo
-        )
+        items.append(item)
 
-        items: List[CollectedItem] = []
-
-        # Process top N trends
-        for idx, row in df.head(max_trends).iterrows():
-            trend_query = str(row[0])
-
-            # Create Google Trends URL
-            url = f"https://trends.google.com/trends/explore?q={trend_query}&geo={geo}"
-
-            # Build collected item
-            item: CollectedItem = {
-                "external_id": f"google_trends_{geo}_{idx}_{datetime.now(timezone.utc).strftime('%Y%m%d')}",
-                "title": f"Trending: {trend_query}",
-                "description": f"Trending search query on Google in {geo}",
-                "url": url,
-                "locale": locale,
-                "rank_position": start_rank + idx,
-
-                # Score based on ranking (higher rank = higher score)
-                "engagement_signals": {
-                    "score": float(max_trends - idx),
-                },
-
-                # Store trend data
-                "raw_payload": {
-                    "query": trend_query,
-                    "geo": geo,
-                    "rank": int(idx) + 1,
-                    "source_type": "daily_trends",
-                    "source_name": "Google Trends",
-                },
-            }
-            items.append(item)
-
-        logger.info(f"Fetched {len(items)} daily trending searches")
-        return items
-
-    except Exception as e:
-        logger.error(f"Failed to fetch daily trends: {e}")
-        return []
-
-
-async def fetch_realtime_trends(
-    pytrends,
-    geo: str,
-    locale: str,
-    max_trends: int,
-    start_rank: int = 1
-) -> List[CollectedItem]:
-    """
-    Fetch realtime trending searches from Google Trends.
-
-    Args:
-        pytrends: TrendReq instance
-        geo: Geographic location code
-        locale: Locale code
-        max_trends: Maximum trends to fetch
-        start_rank: Starting rank position
-
-    Returns:
-        List of CollectedItem dicts
-    """
-    try:
-        # Run synchronous pytrends method in executor
-        loop = asyncio.get_event_loop()
-        trending_data = await loop.run_in_executor(
-            None,
-            pytrends.realtime_trending_searches,
-            geo
-        )
-
-        items: List[CollectedItem] = []
-
-        # Process top N realtime trends
-        for idx, trend in enumerate(trending_data.head(max_trends)):
-            if isinstance(trend, dict):
-                title = trend.get("title", "")
-                traffic = trend.get("formattedTraffic", "")
-
-                if not title:
-                    continue
-
-                # Create realtime trends URL
-                url = f"https://trends.google.com/trends/trendingsearches/realtime?geo={geo}&category=all"
-
-                # Build collected item
-                item: CollectedItem = {
-                    "external_id": f"google_trends_realtime_{geo}_{idx}_{datetime.now(timezone.utc).strftime('%Y%m%d%H')}",
-                    "title": f"Realtime: {title}",
-                    "description": f"Realtime trending search with {traffic} searches",
-                    "url": url,
-                    "locale": locale,
-                    "rank_position": start_rank + idx,
-
-                    # Score based on ranking
-                    "engagement_signals": {
-                        "score": float(max_trends - idx),
-                        "traffic": traffic,
-                    },
-
-                    # Store trend data
-                    "raw_payload": {
-                        **trend,
-                        "geo": geo,
-                        "is_realtime": True,
-                        "source_type": "realtime_trends",
-                        "source_name": "Google Trends Realtime",
-                    },
-                }
-                items.append(item)
-
-        logger.info(f"Fetched {len(items)} realtime trends")
-        return items
-
-    except Exception as e:
-        logger.warning(f"Failed to fetch realtime trends (may not be available for {geo}): {e}")
-        return []
+    logger.info(f"Collected {len(items)} trends from Google Trends (geo={geo})")
+    return items, None

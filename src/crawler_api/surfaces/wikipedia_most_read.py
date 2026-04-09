@@ -1,15 +1,14 @@
 """
 Wikipedia Most Read surface collector.
 
-Fetches the top-50 most-read Wikipedia articles per language per day using the
-official Wikimedia REST API. No key, no auth, no scraping required.
+Fetches the top most-read Wikipedia articles per language per day using the
+Wikimedia Pageviews API. No key, no auth, no scraping required.
 Available in 50+ languages — one collector, configured per region via config_json.
 
 API endpoint pattern:
-  https://api.wikimedia.org/feed/v1/wikipedia/{lang}/most-read/{YYYY}/{MM}/{DD}
+  https://wikimedia.org/api/rest_v1/metrics/pageviews/top/{lang}.wikipedia/all-access/{YYYY}/{MM}/{DD}
 
-Response: JSON with articles[].title, articles[].views,
-          articles[].content_urls.desktop.page
+Response: JSON with items[0].articles[].article, items[0].articles[].views
 
 Surface type: ranking
 Bucket: hot_now
@@ -25,13 +24,14 @@ from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
-WIKIMEDIA_API_BASE = "https://api.wikimedia.org/feed/v1/wikipedia"
+PAGEVIEWS_API_BASE = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top"
 
 # Pages to filter out — disambiguation, navigation, meta pages
 BLOCKLIST = {
     "Main_Page", "Special:Search", "Wikipedia", "404_error",
+    "-", ".", ".xxx",
 }
-BLOCKLIST_PREFIXES = ("Portal:", "Template:", "Help:", "Wikipedia:")
+BLOCKLIST_PREFIXES = ("Portal:", "Template:", "Help:", "Wikipedia:", "Special:")
 BLOCKLIST_SUFFIXES = (" (disambiguation)",)
 
 
@@ -69,7 +69,7 @@ async def collect(
     Args:
         config: Surface configuration with lang and locale
         cursor: Pagination cursor (unused — daily API, no pagination)
-        limit: Maximum items to collect (API returns up to 50)
+        limit: Maximum items to collect
 
     Returns:
         (items, None) — no pagination cursor
@@ -88,16 +88,26 @@ async def collect(
     yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     date_path = yesterday.strftime("%Y/%m/%d")
 
-    url = f"{WIKIMEDIA_API_BASE}/{lang}/most-read/{date_path}"
+    # Pageviews API: /top/{project}/all-access/{YYYY}/{MM}/{DD}
+    url = f"{PAGEVIEWS_API_BASE}/{lang}.wikipedia/all-access/{date_path}"
 
     logger.info(f"Fetching Wikipedia most-read articles (lang={lang}, date={date_path})...")
 
     async with RateLimitedClient(timeout=30.0) as client:
-        response = await client.get(url, headers={"Accept": "application/json"})
+        response = await client.get(url, headers={
+            "Accept": "application/json",
+            "User-Agent": "CrawlerBot/1.0 (trend data collection)",
+        })
         response.raise_for_status()
         data = response.json()
 
-    articles = data.get("articles", [])
+    # Pageviews API returns: { "items": [ { "articles": [...] } ] }
+    raw_items = data.get("items", [])
+    if not raw_items:
+        logger.warning(f"No items returned from Pageviews API (lang={lang})")
+        return [], None
+
+    articles = raw_items[0].get("articles", [])
     items: List[CollectedItem] = []
     rank = 0
 
@@ -105,23 +115,24 @@ async def collect(
         if rank >= limit:
             break
 
-        title = article.get("title", "")
+        # Pageviews API uses "article" field (not "title")
+        title = article.get("article", "")
         if not title or _is_filtered(title):
             continue
 
-        # URL lives at content_urls.desktop.page
-        content_urls = article.get("content_urls", {})
-        desktop_url = content_urls.get("desktop", {}).get("page", "")
-        if not desktop_url:
-            # Fallback: construct canonical URL
-            desktop_url = f"https://{lang}.wikipedia.org/wiki/{title.replace(' ', '_')}"
-
         views = article.get("views", 0)
+
+        # Construct canonical URL (Pageviews API doesn't provide content_urls)
+        desktop_url = f"https://{lang}.wikipedia.org/wiki/{title}"
+
+        # Convert underscores to spaces for display title
+        display_title = title.replace("_", " ")
+
         rank += 1
 
         items.append({
-            "external_id": f"wiki_{lang}_{title.replace(' ', '_')}",
-            "title": title.replace("_", " "),
+            "external_id": f"wiki_{lang}_{title}",
+            "title": display_title,
             "url": desktop_url,
             "locale": locale,
             "published_at": yesterday.isoformat(),
@@ -134,7 +145,6 @@ async def collect(
                 "views": views,
                 "lang": lang,
                 "date": date_path,
-                "content_urls": content_urls,
                 "source": "wikipedia_most_read",
             },
         })

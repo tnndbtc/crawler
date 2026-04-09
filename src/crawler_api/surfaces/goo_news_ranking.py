@@ -77,10 +77,14 @@ async def collect(
     seen_urls: set = set()
     rank = 0
 
-    # Primary selector 1: div.ranking-list > ol > li
-    list_items = soup.select("div.ranking-list > ol > li")
+    # Primary selector 1: ul with many li children (current layout uses ul.mb16)
+    list_items = soup.select("ul.mb16 > li")
 
-    # Primary selector 2: div#ranking > ul > li
+    # Primary selector 2: div.ranking-list > ol > li (legacy layout)
+    if not list_items:
+        list_items = soup.select("div.ranking-list > ol > li")
+
+    # Primary selector 3: div#ranking > ul > li (legacy layout)
     if not list_items:
         list_items = soup.select("div#ranking > ul > li")
 

@@ -99,6 +99,7 @@ class SurfaceHealthFilter(admin.SimpleListFilter):
             ('healthy', 'Healthy (recent success)'),
             ('failing', 'Failing (has errors)'),
             ('stale', 'Stale (no recent runs)'),
+            ('disabled', 'Disabled'),
         )
 
     def queryset(self, request, queryset):
@@ -107,17 +108,23 @@ class SurfaceHealthFilter(admin.SimpleListFilter):
 
         if self.value() == 'healthy':
             return queryset.filter(
+                enabled=True,
                 last_success_at__isnull=False,
                 last_error__isnull=True
             )
         elif self.value() == 'failing':
             return queryset.filter(
+                enabled=True,
                 last_error__isnull=False
             )
         elif self.value() == 'stale':
             return queryset.filter(
+                enabled=True,
+            ).filter(
                 Q(last_run_at__isnull=True) | Q(last_run_at__lt=one_hour_ago)
             )
+        elif self.value() == 'disabled':
+            return queryset.filter(enabled=False)
         return queryset
 
 
@@ -217,6 +224,8 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
 
     def health_status(self, obj):
         """Display health status with icon."""
+        if not obj.enabled:
+            return format_html('⛔ <span style="color: gray;">Disabled</span>')
         if obj.last_error:
             return format_html('❌ <span style="color: red;">Error</span>')
         elif obj.last_success_at:

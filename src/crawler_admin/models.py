@@ -190,6 +190,15 @@ class TrendSurface(models.Model):
         help_text="Last error message (from /tmp/t8)"
     )
 
+    healthy = models.BooleanField(
+        default=True,
+        help_text="False when surface has 3+ consecutive runs with 0 items collected"
+    )
+    unhealthy_streak = models.IntegerField(
+        default=0,
+        help_text="Consecutive runs with 0 items collected"
+    )
+
     # Legacy scheduling fields (deprecated, use health fields above)
     next_run_at = models.DateTimeField(
         null=True,

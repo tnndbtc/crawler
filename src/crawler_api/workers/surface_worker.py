@@ -209,8 +209,21 @@ async def execute_surface(surface: TrendSurface) -> None:
         surface.last_error = None
         surface.last_cursor = next_cursor
         surface.next_run_at = timezone.now() + timedelta(seconds=surface.poll_interval_seconds)
+
+        # Update healthy status based on items collected
+        if fetched_count > 0:
+            surface.healthy = True
+            surface.unhealthy_streak = 0
+        else:
+            surface.unhealthy_streak = (surface.unhealthy_streak or 0) + 1
+            if surface.unhealthy_streak >= 3:
+                surface.healthy = False
+
         await sync_to_async(surface.save)(
-            update_fields=['last_success_at', 'last_error', 'last_cursor', 'next_run_at']
+            update_fields=[
+                'last_success_at', 'last_error', 'last_cursor', 'next_run_at',
+                'healthy', 'unhealthy_streak',
+            ]
         )
 
         # Log
