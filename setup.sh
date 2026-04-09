@@ -299,6 +299,7 @@ start_service() {
     fi
 
     print_step "Starting $service_description..."
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] === Starting $service_description ===" >> "$log_file"
 
     # Start service in background with nohup
     # Pass API keys from current environment to child process
@@ -306,7 +307,7 @@ start_service() {
     nohup env \
         OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
         DEEPL_API_KEY="${DEEPL_API_KEY:-}" \
-        bash -c "$start_command" > "$log_file" 2>&1 &
+        bash -c "$start_command" >> "$log_file" 2>&1 &
     local pid=$!
 
     # Save PID
@@ -371,6 +372,7 @@ stop_service() {
     all_pids=$(echo "$all_pids" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 
     print_step "Stopping $service_description (PIDs: $all_pids)..."
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] === Stopping $service_description (PIDs: $all_pids) ===" >> "$log_file"
 
     # Try graceful shutdown first
     for pid in $all_pids; do
