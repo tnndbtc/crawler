@@ -1412,7 +1412,6 @@ run_all_tests() {
 
 test_menu() {
     while true; do
-        clear
         print_header "Test & Validation Menu"
 
         echo ""
@@ -1694,7 +1693,6 @@ print(f'  {\"TOTAL\":<8} {total_r:>12} {total_d:>8}')
 }
 
 show_menu() {
-    clear
     echo -e "${BOLD}${CYAN}"
     cat << "EOF"
 ╔═══════════════════════════════════════════════════════════╗
