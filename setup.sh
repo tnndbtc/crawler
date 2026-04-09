@@ -26,6 +26,13 @@ BACKUP_DIR="${SCRIPT_DIR}/backups"
 ENV_FILE="${SCRIPT_DIR}/.env"
 DB_FILE="${SCRIPT_DIR}/db.sqlite3"
 
+# Load .env (only set vars that aren't already in environment)
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
+
 # Service configuration
 DJANGO_PORT=8001
 API_PORT=8002
@@ -468,14 +475,22 @@ load_seeds()
     start_service "surface_worker" "Surface Worker" \
         "${SCRIPT_DIR}/scripts/run_surface_worker.sh"
 
-    start_service "translation_worker" "Translation Worker" \
-        "${SCRIPT_DIR}/scripts/run_translation_worker.sh"
+    if [ "${ENABLE_TRANSLATION_WORKER:-true}" = "true" ]; then
+        start_service "translation_worker" "Translation Worker" \
+            "${SCRIPT_DIR}/scripts/run_translation_worker.sh"
+    else
+        print_info "Translation Worker: DISABLED (ENABLE_TRANSLATION_WORKER=false in .env)"
+    fi
 
     start_service "hotness_worker" "Hotness Worker" \
         "${SCRIPT_DIR}/scripts/run_hotness_worker.sh"
 
-    start_service "summarization_worker" "Summarization Worker" \
-        "${SCRIPT_DIR}/scripts/run_summarization_worker.sh"
+    if [ "${ENABLE_SUMMARIZATION_WORKER:-true}" = "true" ]; then
+        start_service "summarization_worker" "Summarization Worker" \
+            "${SCRIPT_DIR}/scripts/run_summarization_worker.sh"
+    else
+        print_info "Summarization Worker: DISABLED (ENABLE_SUMMARIZATION_WORKER=false in .env)"
+    fi
 
     echo ""
     print_success "All services started!"
