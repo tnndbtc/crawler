@@ -67,6 +67,9 @@ async def collect(
     feed_urls = config.get('feed_urls', [])
     locale = config.get('locale', 'en-US')
     source_name = config.get('source_name', 'generic_rss')
+    # Optional custom headers — useful for feeds that block the default python-httpx UA
+    # Example: {"User-Agent": "Mozilla/5.0 (compatible)"}
+    extra_headers = config.get('headers') or None
 
     if not feed_urls:
         logger.error("No feed_urls configured in config_json")
@@ -91,7 +94,8 @@ async def collect(
                 config=config,
                 cursor=None,  # Don't use cursor for multi-feed (complex state management)
                 limit=items_per_feed,
-                locale=locale
+                locale=locale,
+                headers=extra_headers,
             )
 
             # Deduplicate by URL

@@ -1,8 +1,12 @@
 """
-YouTube Trending surface collector.
+YouTube surface collector.
 
-Uses YouTube Data API v3 to fetch trending videos.
-Requires YOUTUBE_API_KEY environment variable.
+Uses YouTube Data API v3. Requires YOUTUBE_API_KEY environment variable.
+
+Modes (set via config_json.mode):
+  "trending"  — mostPopular chart per region (default, existing behaviour)
+  "search"    — query-based search (config: query, order)
+  "channel"   — latest uploads from a specific channel (config: channel_id)
 
 ENHANCED features (migrated from source project):
 - Dual-mode fetching: Trending videos + Popular recent videos
@@ -16,6 +20,7 @@ Bucket: category_entertainment
 Migrated from: /home/tnnd/data/code/trend/trend_agent/ingestion/plugins/youtube.py
 """
 
+import html
 import os
 import logging
 from typing import Optional, Tuple, List
@@ -243,28 +248,251 @@ async def fetch_popular_recent_videos(
         return []
 
 
+async def _get_uploads_playlist_id(
+    client: httpx.AsyncClient,
+    api_key: str,
+    channel_id: str,
+) -> Optional[str]:
+    """
+    Step 1 of channel mode: resolve channel_id → uploads playlist ID.
+
+    The uploads playlist ID is the same as the channel_id with 'UC' replaced
+    by 'UU', but fetching it via API is more robust for edge cases.
+
+    Args:
+        client: HTTP client
+        api_key: YouTube Data API key
+        channel_id: YouTube channel ID (e.g. "UCNye-wNBqNL5ZzHSJj3l8Bg")
+
+    Returns:
+        Uploads playlist ID string, or None if channel not found
+    """
+    params = {
+        "part": "contentDetails",
+        "id": channel_id,
+        "key": api_key,
+    }
+    try:
+        response = await client.get(f"{YOUTUBE_API_BASE}/channels", params=params)
+        response.raise_for_status()
+        data = response.json()
+        items = data.get("items", [])
+        if not items:
+            logger.warning(f"YouTube channel not found: {channel_id}")
+            return None
+        return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    except Exception as e:
+        logger.error(f"Failed to resolve uploads playlist for channel {channel_id}: {e}")
+        return None
+
+
+async def _collect_search_mode(
+    client: httpx.AsyncClient,
+    api_key: str,
+    query: str,
+    locale: str,
+    limit: int,
+    order: str = "relevance",
+) -> List[CollectedItem]:
+    """
+    Search mode: fetch videos matching a text query.
+
+    Maps to config_json: {"mode": "search", "query": "breaking news"}
+
+    Args:
+        client: HTTP client
+        api_key: YouTube Data API key
+        query: Search query string
+        locale: Locale string for output items
+        limit: Max videos to return (capped at 50 by API)
+        order: Sort order — "relevance" (default) or "date" or "viewCount"
+
+    Returns:
+        List of CollectedItem dicts
+    """
+    params = {
+        "part": "snippet",
+        "type": "video",
+        "q": query,
+        "order": order,
+        "maxResults": min(limit, 50),
+        "key": api_key,
+        "safeSearch": "moderate",
+    }
+
+    logger.info(f"YouTube search mode: query={query!r}, order={order}, limit={limit}")
+
+    try:
+        response = await client.get(f"{YOUTUBE_API_BASE}/search", params=params)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.error(f"YouTube search API error for query={query!r}: {e}")
+        return []
+
+    items: List[CollectedItem] = []
+    for rank, entry in enumerate(data.get("items", []), start=1):
+        video_id = entry.get("id", {}).get("videoId")
+        if not video_id:
+            continue
+        snippet = entry.get("snippet", {})
+        title = html.unescape(snippet.get("title", "Untitled"))
+        description = html.unescape(snippet.get("description", ""))
+        published_at = snippet.get("publishedAt")
+        channel_title = snippet.get("channelTitle", "")
+
+        thumbnails = snippet.get("thumbnails", {})
+        thumbnail_url = (
+            thumbnails.get("high", {}).get("url") or
+            thumbnails.get("medium", {}).get("url") or
+            thumbnails.get("default", {}).get("url") or
+            f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+        )
+
+        item: CollectedItem = {
+            "external_id": video_id,
+            "title": title,
+            "description": description[:1000] if description else None,
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "locale": locale,
+            "published_at": published_at,
+            "rank_position": rank,
+            "engagement_signals": {},
+            "raw_payload": {
+                **entry,
+                "_source": "search",
+                "_query": query,
+                "_thumbnail_url": thumbnail_url,
+                "channelTitle": channel_title,
+            },
+        }
+        items.append(item)
+
+    logger.info(f"YouTube search collected {len(items)} items for query={query!r}")
+    return items
+
+
+async def _collect_channel_mode(
+    client: httpx.AsyncClient,
+    api_key: str,
+    channel_id: str,
+    locale: str,
+    limit: int,
+) -> List[CollectedItem]:
+    """
+    Channel mode: fetch latest uploads from a specific YouTube channel.
+
+    Uses a 2-step API call:
+      1. channels?part=contentDetails → uploads playlist ID
+      2. playlistItems?playlistId=... → latest video list
+
+    Maps to config_json: {"mode": "channel", "channel_id": "UCNye-wNBqNL5ZzHSJj3l8Bg"}
+
+    Args:
+        client: HTTP client
+        api_key: YouTube Data API key
+        channel_id: YouTube channel ID
+        locale: Locale string for output items
+        limit: Max videos to return (capped at 50 by API)
+
+    Returns:
+        List of CollectedItem dicts
+    """
+    logger.info(f"YouTube channel mode: channel_id={channel_id}, limit={limit}")
+
+    # Step 1: resolve channel → uploads playlist
+    playlist_id = await _get_uploads_playlist_id(client, api_key, channel_id)
+    if not playlist_id:
+        return []
+
+    logger.info(f"Resolved uploads playlist: {playlist_id}")
+
+    # Step 2: fetch latest videos from uploads playlist
+    params = {
+        "part": "snippet",
+        "playlistId": playlist_id,
+        "maxResults": min(limit, 50),
+        "key": api_key,
+    }
+
+    try:
+        response = await client.get(f"{YOUTUBE_API_BASE}/playlistItems", params=params)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.error(f"YouTube playlistItems error for playlist {playlist_id}: {e}")
+        return []
+
+    items: List[CollectedItem] = []
+    for rank, entry in enumerate(data.get("items", []), start=1):
+        snippet = entry.get("snippet", {})
+        video_id = snippet.get("resourceId", {}).get("videoId")
+        if not video_id:
+            continue
+
+        title = html.unescape(snippet.get("title", "Untitled"))
+        description = html.unescape(snippet.get("description", ""))
+        published_at = snippet.get("publishedAt")
+        channel_title = snippet.get("channelTitle", "")
+
+        thumbnails = snippet.get("thumbnails", {})
+        thumbnail_url = (
+            thumbnails.get("maxres", {}).get("url") or
+            thumbnails.get("high", {}).get("url") or
+            thumbnails.get("medium", {}).get("url") or
+            thumbnails.get("default", {}).get("url") or
+            f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+        )
+
+        item: CollectedItem = {
+            "external_id": video_id,
+            "title": title,
+            "description": description[:1000] if description else None,
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "locale": locale,
+            "published_at": published_at,
+            "rank_position": rank,
+            "engagement_signals": {},
+            "raw_payload": {
+                **entry,
+                "_source": "channel",
+                "_channel_id": channel_id,
+                "_playlist_id": playlist_id,
+                "_thumbnail_url": thumbnail_url,
+                "channelTitle": channel_title,
+            },
+        }
+        items.append(item)
+
+    logger.info(f"YouTube channel collected {len(items)} items from {channel_id}")
+    return items
+
+
 async def collect(
     config: dict,
     cursor: Optional[str],
     limit: int
 ) -> Tuple[List[CollectedItem], Optional[str]]:
     """
-    Collect trending videos from YouTube using Data API v3.
+    Collect YouTube videos using Data API v3.
 
-    ENHANCED: Supports dual-mode fetching to get both trending and popular recent content.
+    Dispatches to one of three modes based on config_json.mode:
 
-    Config params (from TrendSurface.config_json):
-        - region_code: YouTube region code (default: "US")
-        - video_category_id: Category ID to filter by (optional, default: all categories)
-        - locale: Preferred locale for content (default: "en-US")
-        - dual_mode: Enable dual-mode fetching (default: False)
-            When True, fetches both:
-            1. Trending videos (mostPopular chart)
-            2. Popular recent videos (most viewed from last 24h)
+      mode="trending" (default)
+        Fetches the mostPopular chart for a region.
+        Config keys: region_code, video_category_id, locale, dual_mode
+
+      mode="search"
+        Fetches videos matching a text query.
+        Config keys: query, order (default: "relevance"), locale
+
+      mode="channel"
+        Fetches latest uploads from a specific channel (2-step API).
+        Config keys: channel_id, locale
 
     Args:
-        config: Surface configuration
-        cursor: Pagination cursor (pageToken from YouTube API)
+        config: Surface configuration (TrendSurface.config_json)
+        cursor: Pagination cursor — used only in trending mode (pageToken)
         limit: Maximum items to collect
 
     Returns:
@@ -273,10 +501,6 @@ async def collect(
     Raises:
         ValueError: If YOUTUBE_API_KEY is not set
         httpx.HTTPError: On API request failures
-
-    Note:
-        In dual-mode, trending videos are ranked first (1-N), then popular recent
-        videos continue the ranking (N+1 onwards).
     """
     # Get API key from environment
     api_key = os.environ.get('YOUTUBE_API_KEY')
@@ -286,10 +510,45 @@ async def collect(
             "Get your API key from: https://console.cloud.google.com/apis/credentials"
         )
 
+    locale = config.get('locale', 'en-US')
+    mode = config.get('mode', 'trending')
+
+    # ── Search mode ───────────────────────────────────────────────────────────
+    if mode == 'search':
+        query = config.get('query', '')
+        if not query:
+            raise ValueError("YouTube search mode requires config_json.query to be set")
+        order = config.get('order', 'relevance')
+        async with RateLimitedClient(timeout=30.0) as client:
+            items = await _collect_search_mode(
+                client=client,
+                api_key=api_key,
+                query=query,
+                locale=locale,
+                limit=limit,
+                order=order,
+            )
+        return items, None  # search has no pagination cursor
+
+    # ── Channel mode ──────────────────────────────────────────────────────────
+    if mode == 'channel':
+        channel_id = config.get('channel_id', '')
+        if not channel_id:
+            raise ValueError("YouTube channel mode requires config_json.channel_id to be set")
+        async with RateLimitedClient(timeout=30.0) as client:
+            items = await _collect_channel_mode(
+                client=client,
+                api_key=api_key,
+                channel_id=channel_id,
+                locale=locale,
+                limit=limit,
+            )
+        return items, None  # channel mode has no pagination cursor
+
+    # ── Trending mode (default) ───────────────────────────────────────────────
     # Parse config
     region_code = config.get('region_code', 'US')
     video_category_id = config.get('video_category_id')  # Optional
-    locale = config.get('locale', 'en-US')
     dual_mode = config.get('dual_mode', False)  # ENHANCED: Enable dual-mode fetching
 
     # YouTube API max is 50 per request
@@ -350,8 +609,8 @@ async def collect(
             content_details = video.get('content_details', {})
 
             # Extract core fields
-            title = snippet.get('title', 'Untitled')
-            description = snippet.get('description', '')
+            title = html.unescape(snippet.get('title', 'Untitled'))
+            description = html.unescape(snippet.get('description', ''))
             published_at = snippet.get('publishedAt')
             channel_title = snippet.get('channelTitle', 'Unknown Channel')
 

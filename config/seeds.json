@@ -3527,6 +3527,144 @@
         "locale": "en-US",
         "source_name": "Yahoo Finance Tech"
       }
+    },
+    {
+      "region": "us",
+      "key": "reddit_worldnews_new",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 0.7,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 25,
+      "config_json": {
+        "subreddit": "worldnews",
+        "mode": "new",
+        "limit": 25
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_news_new",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 0.7,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 25,
+      "config_json": {
+        "subreddit": "news",
+        "mode": "new",
+        "limit": 25
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_technology_new",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 0.7,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 25,
+      "config_json": {
+        "subreddit": "technology",
+        "mode": "new",
+        "limit": 25
+      }
+    },
+    {
+      "region": "us",
+      "key": "youtube_search_breakingnews",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "mode": "search",
+        "query": "breaking news",
+        "order": "relevance",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "us",
+      "key": "youtube_search_latestnews",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "mode": "search",
+        "query": "latest news today",
+        "order": "date",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "gb",
+      "key": "youtube_bbc",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "mode": "channel",
+        "channel_id": "UCLXo7UDZvByw2ixzpQCufnA",
+        "locale": "en-GB"
+      }
+    },
+    {
+      "region": "us",
+      "key": "youtube_aljazeera",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "mode": "channel",
+        "channel_id": "UCNye-wNBqNL5ZzHSJj3l8Bg",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "us",
+      "key": "youtube_cnn",
+      "platform": "youtube",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.youtube_trending:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "mode": "channel",
+        "channel_id": "UCupvZG-5ko_eiXAupbDfxWw",
+        "locale": "en-US"
+      }
     }
   ],
   "translation": {

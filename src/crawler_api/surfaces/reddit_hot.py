@@ -103,6 +103,7 @@ async def collect(
 
     Config params (from TrendSurface.config_json):
         - subreddit: Subreddit to collect from (default: "all")
+        - mode: Feed mode — "hot" (default) or "new" (early signal detection)
         - time_filter: Time filter for hot posts (optional: hour, day, week, month, year, all)
 
     Args:
@@ -118,13 +119,15 @@ async def collect(
     """
     # Parse config
     subreddit = config.get('subreddit', 'all')
+    mode = config.get('mode', 'hot')  # "hot" (default) or "new" (early signal)
     time_filter = config.get('time_filter')  # Optional
 
     # Reddit typically allows up to 100 items per request
     actual_limit = min(limit, 100)
 
-    # Build request URL and parameters
-    url = f"{REDDIT_BASE}/r/{subreddit}/hot.json"
+    # Build request URL — /new.json for early signal mode, /hot.json otherwise
+    feed = 'new' if mode == 'new' else 'hot'
+    url = f"{REDDIT_BASE}/r/{subreddit}/{feed}.json"
     params = {
         'limit': actual_limit,
         'raw_json': 1,  # Prevent HTML entity encoding
@@ -139,7 +142,7 @@ async def collect(
         params['t'] = time_filter
 
     logger.info(
-        f"Fetching Reddit hot posts: subreddit=r/{subreddit}, limit={actual_limit}"
+        f"Fetching Reddit {feed} posts: subreddit=r/{subreddit}, limit={actual_limit}"
     )
 
     # Make API request with User-Agent (Reddit requires it)

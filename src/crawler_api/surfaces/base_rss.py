@@ -194,7 +194,8 @@ async def collect_rss_feed(
     config: dict,
     cursor: Optional[str],
     limit: int,
-    locale: str = "en-US"
+    locale: str = "en-US",
+    headers: Optional[dict] = None,
 ) -> Tuple[List[CollectedItem], Optional[str]]:
     """
     Collect items from an RSS feed.
@@ -212,6 +213,8 @@ async def collect_rss_feed(
         cursor: Last seen entry ID (for deduplication)
         limit: Maximum items to collect
         locale: Default locale code
+        headers: Optional extra HTTP headers (e.g. User-Agent override for
+                 feeds that block the default python-httpx UA)
 
     Returns:
         Tuple of (items, next_cursor)
@@ -246,8 +249,8 @@ async def collect_rss_feed(
             # Optional: maybe visit homepage before fetching feed
             await human_session.maybe_visit_homepage(rss_url)
 
-            # Fetch RSS feed (request_role="direct" by default)
-            response = await client.get(rss_url)
+            # Fetch RSS feed — pass optional headers (e.g. custom User-Agent)
+            response = await client.get(rss_url, headers=headers or {})
             response.raise_for_status()
 
             # Parse RSS feed content
