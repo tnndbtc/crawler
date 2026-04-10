@@ -457,6 +457,12 @@ class TrendItem(models.Model):
         help_text="Main region the content is about (first non-US from "
                   "content_regions). Used for fast indexed queries."
     )
+    region_classified_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        help_text="When region classification was last attempted (by heuristic "
+                  "or LLM). NULL = never tried. Prevents re-processing items "
+                  "that LLM classified as no-region."
+    )
 
     class Meta:
         ordering = ['-collected_at']

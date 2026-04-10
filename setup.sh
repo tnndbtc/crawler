@@ -1707,6 +1707,68 @@ for lg in LOCALES:
     total_r += ready; total_d += done
 print('  ' + '-'*32)
 print(f'  {\"TOTAL\":<8} {total_r:>12} {total_d:>8}')
+
+# Region classification queue
+print()
+print('--- Region Classification Queue ---')
+total_items = TrendItem.objects.count()
+classified = TrendItem.objects.exclude(content_regions=[]).count()
+unclassified = TrendItem.objects.filter(content_regions=[]).count()
+# Pending = never tried (will be processed next cycle)
+pending = TrendItem.objects.filter(
+    content_regions=[], region_classified_at__isnull=True
+).count()
+# Tried but LLM returned no region
+tried_no_region = TrendItem.objects.filter(
+    content_regions=[], region_classified_at__isnull=False
+).count()
+
+print(f'  Total items:           {total_items:>8}')
+print(f'  Classified:            {classified:>8} ({classified*100//total_items if total_items else 0}%)')
+print(f'  Unclassified total:    {unclassified:>8} ({unclassified*100//total_items if total_items else 0}%)')
+print(f'    Pending (never tried):  {pending:>5}  ← only top N% per locale will hit LLM')
+print(f'    Tried, no region:       {tried_no_region:>5}  ← LLM said none, skipped')
+
+# Per-locale LLM queue calculation for PENDING items only
+from crawler_admin.models import SystemSettings
+from django.db.models import Count
+print()
+print('  Pending items: per-locale LLM queue (using translation_hot_percent_<locale>):')
+print(f'    {\"Locale\":<8} {\"Pending\":>10} {\"Percent\":>8} {\"LLM Queue\":>10}')
+print('    ' + '-'*40)
+
+pending_by_locale = (
+    TrendItem.objects.filter(content_regions=[], region_classified_at__isnull=True)
+    .values('lang_group')
+    .annotate(c=Count('id'))
+    .order_by('-c')
+)
+
+total_llm = 0
+for row in pending_by_locale:
+    lg = row['lang_group'] or 'unknown'
+    count = row['c']
+    key = f'translation_hot_percent_{lg}'
+    try:
+        pct = SystemSettings.get_setting(key, default=None)
+        if pct is None:
+            pct = SystemSettings.get_setting('translation_hot_percent', default=10)
+        pct = int(pct)
+    except Exception:
+        pct = 10
+    llm_count = max(1, count * pct // 100) if count > 0 else 0
+    total_llm += llm_count
+    print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_count:>10}')
+
+print('    ' + '-'*40)
+print(f'    {\"TOTAL\":<8} {pending:>10} {\"\":>8} {total_llm:>10}')
+print(f'    (non-LLM pending items will be marked as tried without LLM call)')
+
+# Top regions by content
+print()
+print('  Top content regions:')
+for r in TrendItem.objects.exclude(primary_region__isnull=True).values('primary_region').annotate(c=Count('id')).order_by('-c')[:10]:
+    print(f'    {r[\"primary_region\"]:<10} {r[\"c\"]:>6}')
 "
 }
 

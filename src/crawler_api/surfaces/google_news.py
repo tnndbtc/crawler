@@ -16,6 +16,7 @@ Migrated from: /home/tnnd/data/code/trend/trend_agent/collectors/google_news.py
 """
 
 import logging
+from io import BytesIO
 from typing import Optional, Tuple, List
 
 import feedparser
@@ -23,6 +24,7 @@ from bs4 import BeautifulSoup
 
 from .base_rss import parse_timestamp, clean_html
 from .collector_interface import CollectedItem
+from shared.http_client import RateLimitedClient
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,8 @@ def extract_first_article_info(summary_html: str) -> Tuple[Optional[str], Option
 
 def parse_google_news_entry(
     entry: feedparser.FeedParserDict,
-    rank: int
+    rank: int,
+    locale: str = 'en-US'
 ) -> Optional[CollectedItem]:
     """
     Parse a Google News RSS entry into a CollectedItem.
@@ -116,7 +119,7 @@ def parse_google_news_entry(
             "external_id": str(source_id),
             "title": title,
             "url": url,
-            "locale": "en-US",  # Google News is primarily English
+            "locale": locale,
             "rank_position": rank,
 
             # RSS feeds don't have engagement metrics
@@ -170,8 +173,9 @@ async def collect(
     Raises:
         Exception: On RSS feed parsing errors
     """
-    # Allow config to override RSS URL or add topic filter
+    # Allow config to override RSS URL, locale, or add topic filter
     rss_url = config.get('rss_url', GOOGLE_NEWS_RSS_URL)
+    locale = config.get('locale', 'en-US')
     topic = config.get('topic')
 
     # Add topic filter if specified
@@ -181,8 +185,11 @@ async def collect(
     logger.info(f"Collecting Google News: limit={limit}, url={rss_url}")
 
     try:
-        # Parse RSS feed
-        feed = feedparser.parse(rss_url)
+        # Fetch and parse RSS feed via RateLimitedClient
+        async with RateLimitedClient(timeout=30.0) as client:
+            response = await client.get(rss_url)
+            response.raise_for_status()
+        feed = feedparser.parse(BytesIO(response.content))
 
         # Check for feed errors
         if feed.get('bozo', False):
@@ -201,7 +208,7 @@ async def collect(
         items: List[CollectedItem] = []
 
         for rank, entry in enumerate(entries[:limit], start=1):
-            item = parse_google_news_entry(entry=entry, rank=rank)
+            item = parse_google_news_entry(entry=entry, rank=rank, locale=locale)
 
             if item:
                 items.append(item)
