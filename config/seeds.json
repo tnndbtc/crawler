@@ -3411,6 +3411,122 @@
         "rss_url": "https://news.google.com/rss/search?q=site%3Awsj.com&hl=en-US&gl=US&ceid=US:en",
         "locale": "en-US"
       }
+    },
+    {
+      "region": "jp",
+      "key": "google_news_jp",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja",
+        "locale": "ja-JP"
+      }
+    },
+    {
+      "region": "kr",
+      "key": "google_news_kr",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
+        "locale": "ko-KR"
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_geopolitics",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "geopolitics",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "fed_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 0.8,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://www.federalreserve.gov/feeds/press_all.xml"],
+        "locale": "en-US",
+        "source_name": "Federal Reserve"
+      }
+    },
+    {
+      "region": "us",
+      "key": "ecb_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 0.8,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://www.ecb.europa.eu/rss/press.html"],
+        "locale": "en",
+        "source_name": "European Central Bank"
+      }
+    },
+    {
+      "region": "us",
+      "key": "yahoofinance_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "feed_urls": ["https://finance.yahoo.com/news/rssindex"],
+        "locale": "en-US",
+        "source_name": "Yahoo Finance"
+      }
+    },
+    {
+      "region": "us",
+      "key": "yahoofinance_tech_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "feed_urls": ["https://finance.yahoo.com/rss/2.0/headline?s=tech&region=US&lang=en-US"],
+        "locale": "en-US",
+        "source_name": "Yahoo Finance Tech"
+      }
     }
   ],
   "translation": {
