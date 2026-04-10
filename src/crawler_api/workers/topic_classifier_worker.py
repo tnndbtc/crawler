@@ -52,8 +52,11 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
 
     Returns (classified_count, remaining_items).
     Items the heuristic couldn't classify are passed to LLM pass.
+
+    Uses bulk_update to write all classified items in batches of 500
+    instead of one UPDATE per item — avoids DB pressure at large batch sizes.
     """
-    classified = 0
+    classified_items = []
     remaining = []
     now = timezone.now()
 
@@ -70,12 +73,19 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
         if tags:
             item.topic_tags = tags
             item.topic_classified_at = now
-            item.save(update_fields=['topic_tags', 'topic_classified_at'])
-            classified += 1
+            classified_items.append(item)
         else:
             remaining.append(item)
 
-    return classified, remaining
+    if classified_items:
+        TrendItem.objects.bulk_update(
+            classified_items,
+            ['topic_tags', 'topic_classified_at'],
+            batch_size=500,
+        )
+        logger.debug(f"bulk_update wrote {len(classified_items)} classified items")
+
+    return len(classified_items), remaining
 
 
 # ---------------------------------------------------------------------------
@@ -220,10 +230,10 @@ def run_once():
     # marking them prevents infinite re-polling.
     now = timezone.now()
     not_sent = [item for item in remaining if item.id not in llm_sent_ids]
-    for item in not_sent:
-        item.topic_classified_at = now
-        item.save(update_fields=['topic_classified_at'])
     if not_sent:
+        for item in not_sent:
+            item.topic_classified_at = now
+        TrendItem.objects.bulk_update(not_sent, ['topic_classified_at'], batch_size=500)
         logger.info(f"Marked {len(not_sent)} low-hotness items as tried (skip LLM)")
 
 

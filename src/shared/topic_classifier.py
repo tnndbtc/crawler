@@ -13,10 +13,16 @@ Fixed vocabulary (12 labels):
 Returns [] when unclassifiable — those items are passed to the LLM pass.
 """
 
+import json
 import logging
+import os
 import re
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Path to the auto-generated keyword file produced by keyword_harvest_worker.py
+_AUTO_KEYWORDS_PATH = Path(__file__).parent.parent.parent / 'config' / 'auto_keywords.json'
 
 VALID_TOPICS: frozenset[str] = frozenset({
     'politics', 'finance', 'ai', 'tech', 'science',
@@ -82,6 +88,11 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'G7', 'G20', 'UN ', 'United Nations', 'Xi Jinping', 'Putin',
         'Trump', 'Biden', 'Modi', 'Macron', 'chancellor', 'prime minister',
         'tariff', 'tariffs', 'diplomat', 'diplomacy', 'geopolit',
+        # China-global politics
+        'Taiwan strait', 'Taiwan Strait', '台海', 'South China Sea', '南海',
+        'one country two systems', 'NPC ', 'Belt and Road', 'BRI ',
+        'Politburo', ' PLA ', 'Hong Kong', 'national security law',
+        'extradition', 'reunification', 'cross-strait',
         '政治', '选举', '制裁', '外交',
     ],
     'finance': [
@@ -90,6 +101,11 @@ KEYWORD_MAP: dict[str, list[str]] = {
         ' bond', ' yield', 'crypto', 'bitcoin', ' ETF', 'hedge fund',
         'IMF', ' ECB', 'deficit', 'debt ceiling', 'stock market',
         'S&P', 'Nasdaq', 'Dow ', 'Wall Street', 'interest rate',
+        # China-global finance
+        'PBOC', 'People\'s Bank of China', ' RMB', ' yuan', 'renminbi',
+        'A-shares', 'CSI 300', 'Hang Seng', 'property crisis', 'Evergrande',
+        'China tariff', 'trade war', 'decoupling', 'supply chain China',
+        'RCEP', 'AIIB',
         '美联储', '通胀', '经济', '股市', '加息', '降息',
     ],
     'ai': [
@@ -99,12 +115,19 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'Anthropic', 'OpenAI', 'DeepMind', 'Mistral', 'xAI', 'Grok',
         'AI Act', 'large language model', 'foundation model',
         'diffusion model', 'generative AI', 'AI model', 'AI system',
+        # China AI
+        'DeepSeek', 'Kimi ', 'Ernie Bot', 'Wenxin', 'PanGu',
+        'AI regulation China', 'Chinese AI',
     ],
     'tech': [
         'Apple', 'Google', 'Microsoft', 'Meta', 'Amazon', 'Tesla',
         'startup', 'software', 'hardware', ' chip', 'semiconductor',
         'iPhone', 'Android', 'open source', 'developer', 'programming',
         'cloud computing', 'cybersecurity', 'data breach', 'quantum computing',
+        # China tech
+        'Huawei', 'Kirin chip', 'HarmonyOS', 'SMIC', 'TSMC',
+        'ByteDance', 'TikTok', 'Douyin', ' DJI', ' BYD', 'CATL',
+        'chip sanctions', 'export controls', 'chip ban',
     ],
     'science': [
         'researchers', 'scientists', 'research paper', 'new study',
@@ -135,6 +158,9 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'merger', 'acquisition', 'layoff', 'layoffs', 'CEO', 'revenue',
         'quarterly results', 'supply chain', 'logistics', 'retail sales',
         'brand', 'bankruptcy', 'valuation', 'venture capital', 'funding round',
+        # China business
+        'Alibaba', 'Tencent', 'JD.com', 'Pinduoduo', 'Meituan', 'Xiaomi',
+        'Ant Group', 'DiDi', 'Chinese EV', 'lithium supply chain',
     ],
     'crime': [
         'arrested', 'charged with', 'murder', 'shooting', 'attack',
@@ -153,11 +179,41 @@ KEYWORD_MAP: dict[str, list[str]] = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# Merge static KEYWORD_MAP with auto_keywords.json (if present) at module load.
+# auto_keywords.json is generated weekly by keyword_harvest_worker.py.
+# On first deploy (file absent) or corrupt write, falls back to static only.
+# ---------------------------------------------------------------------------
+
+def _load_auto_keywords() -> dict[str, list[str]]:
+    try:
+        with open(_AUTO_KEYWORDS_PATH) as f:
+            data = json.load(f)
+        return data.get('keywords', {})
+    except FileNotFoundError:
+        return {}  # first deploy: file not yet generated, safe to skip
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"auto_keywords.json unreadable ({e}); using static keywords only")
+        return {}
+
+
+def _build_keyword_patterns() -> dict[str, list[re.Pattern]]:
+    auto_kw = _load_auto_keywords()
+    patterns: dict[str, list[re.Pattern]] = {}
+    for topic, static_keywords in KEYWORD_MAP.items():
+        auto_keywords = auto_kw.get(topic, [])
+        # Static keywords first, auto appended; deduplicated, order preserved
+        merged = list(dict.fromkeys(static_keywords + auto_keywords))
+        patterns[topic] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in merged]
+    # Handle any topics in auto_kw not in static KEYWORD_MAP
+    for topic, auto_keywords in auto_kw.items():
+        if topic not in patterns:
+            patterns[topic] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in auto_keywords]
+    return patterns
+
+
 # Pre-compile case-insensitive patterns once at module load time
-_KEYWORD_PATTERNS: dict[str, list[re.Pattern]] = {
-    topic: [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
-    for topic, keywords in KEYWORD_MAP.items()
-}
+_KEYWORD_PATTERNS: dict[str, list[re.Pattern]] = _build_keyword_patterns()
 
 
 def _classify_by_keywords(title: str, description: str | None = None) -> list[str]:

@@ -3665,6 +3665,57 @@
         "channel_id": "UCupvZG-5ko_eiXAupbDfxWw",
         "locale": "en-US"
       }
+    },
+    {
+      "region": "cn",
+      "key": "scmp_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 40,
+      "config_json": {
+        "feed_urls": ["http://www.scmp.com/rss/91/feed/"],
+        "locale": "en-HK",
+        "source_name": "South China Morning Post"
+      }
+    },
+    {
+      "region": "cn",
+      "key": "cna_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"],
+        "locale": "en-SG",
+        "source_name": "Channel News Asia"
+      }
+    },
+    {
+      "region": "cn",
+      "key": "initium_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 20,
+      "config_json": {
+        "feed_urls": ["https://theinitium.com/rss/"],
+        "locale": "zh-Hant",
+        "source_name": "端传媒 Initium Media"
+      }
     }
   ],
   "translation": {
