@@ -124,6 +124,9 @@ is_service_running() {
         region_classifier_worker)
             process_pid=$(ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             ;;
+        topic_classifier_worker)
+            process_pid=$(ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
     esac
 
     if [ ! -z "$process_pid" ]; then
@@ -178,6 +181,9 @@ get_service_pid() {
             ;;
         region_classifier_worker)
             ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        topic_classifier_worker)
+            ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
             ;;
         *)
             echo ""
@@ -369,6 +375,9 @@ stop_service() {
         region_classifier_worker)
             all_pids=$(ps aux | grep -E "region_classifier_worker\.(py|sh)|tee.*region_classifier_worker" | grep -v grep | awk '{print $2}')
             ;;
+        topic_classifier_worker)
+            all_pids=$(ps aux | grep -E "topic_classifier_worker\.(py|sh)|tee.*topic_classifier_worker" | grep -v grep | awk '{print $2}')
+            ;;
     esac
 
     # Also include PID file pid
@@ -510,6 +519,13 @@ load_seeds()
         print_info "Region Classifier Worker: DISABLED (ENABLE_REGION_CLASSIFIER=false in .env)"
     fi
 
+    if [ "${ENABLE_TOPIC_CLASSIFIER:-true}" = "true" ]; then
+        start_service "topic_classifier_worker" "Topic Classifier Worker" \
+            "${SCRIPT_DIR}/scripts/run_topic_classifier_worker.sh"
+    else
+        print_info "Topic Classifier Worker: DISABLED (ENABLE_TOPIC_CLASSIFIER=false in .env)"
+    fi
+
     echo ""
     print_success "All services started!"
     print_info "Use option 5 to check service status"
@@ -522,6 +538,7 @@ stop_all_services() {
 
     # Step 1: Stop tracked services (original behavior)
     print_step "Stopping tracked services..."
+    stop_service "topic_classifier_worker" "Topic Classifier Worker"
     stop_service "region_classifier_worker" "Region Classifier Worker"
     stop_service "summarization_worker" "Summarization Worker"
     stop_service "hotness_worker" "Hotness Worker"
@@ -595,7 +612,7 @@ restart_all_services() {
 start_or_restart_services() {
     # If anything is running, restart. Otherwise just start.
     local any_running=false
-    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker region_classifier_worker; do
+    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker region_classifier_worker topic_classifier_worker; do
         if is_service_running "$svc"; then
             any_running=true
             break
@@ -620,6 +637,7 @@ show_service_status() {
         "hotness_worker:Hotness Worker:-"
         "summarization_worker:Summarization Worker:-"
         "region_classifier_worker:Region Classifier Worker:-"
+        "topic_classifier_worker:Topic Classifier Worker:-"
     )
 
     echo -e "${BOLD}Service                    Status      PID       Port${NC}"
@@ -1731,7 +1749,6 @@ print(f'    Tried, no region:       {tried_no_region:>5}  ← LLM said none, ski
 
 # Per-locale LLM queue calculation for PENDING items only
 from crawler_admin.models import SystemSettings
-from django.db.models import Count
 print()
 print('  Pending items: per-locale LLM queue (using translation_hot_percent_<locale>):')
 print(f'    {\"Locale\":<8} {\"Pending\":>10} {\"Percent\":>8} {\"LLM Queue\":>10}')
@@ -1769,6 +1786,78 @@ print()
 print('  Top content regions:')
 for r in TrendItem.objects.exclude(primary_region__isnull=True).values('primary_region').annotate(c=Count('id')).order_by('-c')[:10]:
     print(f'    {r[\"primary_region\"]:<10} {r[\"c\"]:>6}')
+
+# Topic classification queue
+print()
+print('--- Topic Classification Queue ---')
+topic_classified = TrendItem.objects.exclude(topic_tags=[]).count()
+topic_unclassified = TrendItem.objects.filter(topic_tags=[]).count()
+topic_pending = TrendItem.objects.filter(
+    topic_tags=[], topic_classified_at__isnull=True
+).count()
+topic_tried_none = TrendItem.objects.filter(
+    topic_tags=[], topic_classified_at__isnull=False
+).count()
+
+print(f'  Total items:           {total_items:>8}')
+print(f'  Classified:            {topic_classified:>8} ({topic_classified*100//total_items if total_items else 0}%)')
+print(f'  Unclassified total:    {topic_unclassified:>8} ({topic_unclassified*100//total_items if total_items else 0}%)')
+print(f'    Pending (never tried):  {topic_pending:>5}  ← all go through heuristic first')
+print(f'    Tried, no tags:         {topic_tried_none:>5}  ← heuristic + LLM found no match')
+
+# Per-locale LLM budget for pending topic items
+# Heuristic runs on ALL pending items (free). LLM only runs on top N% per locale IF heuristic misses.
+# This shows the worst-case LLM budget (i.e. if heuristic catches 0 of these items).
+print()
+print('  Pending items breakdown:')
+print(f'    All {topic_pending} pending → heuristic pass first (instant, free)')
+print(f'    If heuristic misses → LLM eligible (top N% per locale):')
+h_locale = 'Locale';  h_pending = 'Pending';  h_pct = 'Percent';  h_llm = 'LLM Budget';  h_skip = 'Below threshold'
+print(f'    {h_locale:<8} {h_pending:>10} {h_pct:>8} {h_llm:>12}  {h_skip:>16}')
+print('    ' + '-'*58)
+
+topic_pending_by_locale = (
+    TrendItem.objects.filter(topic_tags=[], topic_classified_at__isnull=True)
+    .values('lang_group')
+    .annotate(c=Count('id'))
+    .order_by('-c')
+)
+
+topic_total_llm = 0
+topic_total_skipped = 0
+for row in topic_pending_by_locale:
+    lg = row['lang_group'] or 'unknown'
+    count = row['c']
+    key = f'translation_hot_percent_{lg}'
+    try:
+        pct = SystemSettings.get_setting(key, default=None)
+        if pct is None:
+            pct = SystemSettings.get_setting('translation_hot_percent', default=10)
+        pct = int(pct)
+    except Exception:
+        pct = 10
+    llm_budget = max(1, count * pct // 100) if count > 0 else 0
+    skipped = count - llm_budget
+    topic_total_llm += llm_budget
+    topic_total_skipped += skipped
+    print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_budget:>12}  {skipped:>16}')
+
+lbl_total = 'TOTAL';  lbl_empty = ''
+print('    ' + '-'*58)
+print(f'    {lbl_total:<8} {topic_pending:>10} {lbl_empty:>8} {topic_total_llm:>12}  {topic_total_skipped:>16}')
+print('    Note: Below-threshold items are marked tried without LLM (no cost).')
+print('    Actual LLM calls will be less if heuristic catches some budget items.')
+
+# Top topic tags
+print()
+print('  Top topic tags (classified items):')
+tagged_items = TrendItem.objects.exclude(topic_tags=[]).values_list('topic_tags', flat=True)
+tag_counts = {}
+for tags in tagged_items:
+    for tag in (tags or []):
+        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:12]:
+    print(f'    {tag:<16} {count:>6}')
 "
 }
 

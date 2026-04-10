@@ -464,6 +464,26 @@ class TrendItem(models.Model):
                   "that LLM classified as no-region."
     )
 
+    # Topic classification (for story_engine story selection)
+    topic_tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Topic labels for story selection "
+            "(e.g. [\"politics\",\"finance\",\"ai\"]). "
+            "Set by topic_classifier_worker. "
+            "Vocabulary: politics, finance, ai, tech, science, "
+            "entertainment, sports, business, crime, society, health, environment."
+        ),
+    )
+    topic_classified_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        help_text=(
+            "When topic classification was last attempted (heuristic or LLM). "
+            "NULL = never tried."
+        ),
+    )
+
     class Meta:
         ordering = ['-collected_at']
         verbose_name = "Trend Item"

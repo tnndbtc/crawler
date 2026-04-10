@@ -395,6 +395,15 @@ class TrendItemAdmin(admin.ModelAdmin):
             'description': 'Chinese Simplified translation for UI display (legacy inline fields)',
             'classes': ('collapse',)
         }),
+        ('Topic Classification', {
+            'fields': ('topic_tags', 'topic_classified_at'),
+            'description': (
+                'Topic labels set by topic_classifier_worker. '
+                'Vocabulary: politics, finance, ai, tech, science, entertainment, '
+                'sports, business, crime, society, health, environment. '
+                'Empty = not yet classified or unclassifiable by heuristic.'
+            ),
+        }),
         ('Metadata', {
             'fields': ('canonical_hash', 'collected_at', 'raw_payload'),
             'classes': ('collapse',)
@@ -406,7 +415,8 @@ class TrendItemAdmin(admin.ModelAdmin):
         'canonical_status', 'canonical_engine', 'canonical_error',
         'display_status_zh_hans', 'display_engine_zh_hans',
         'base_lang', 'locale', 'lang_group', 'lang_detected_at',
-        'hotness', 'hotness_computed_at'
+        'hotness', 'hotness_computed_at',
+        'topic_classified_at',
     ]
 
     def title_snippet(self, obj):
