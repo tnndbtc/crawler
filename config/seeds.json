@@ -137,6 +137,48 @@
       "name": "Argentina",
       "default_locale": "es-AR",
       "enabled": true
+    },
+    {
+      "key": "gb",
+      "name": "United Kingdom",
+      "default_locale": "en-GB",
+      "enabled": true
+    },
+    {
+      "key": "au",
+      "name": "Australia",
+      "default_locale": "en-AU",
+      "enabled": true
+    },
+    {
+      "key": "ca",
+      "name": "Canada",
+      "default_locale": "en-CA",
+      "enabled": true
+    },
+    {
+      "key": "mx",
+      "name": "Mexico",
+      "default_locale": "es-MX",
+      "enabled": true
+    },
+    {
+      "key": "ng",
+      "name": "Nigeria",
+      "default_locale": "en-NG",
+      "enabled": true
+    },
+    {
+      "key": "pk",
+      "name": "Pakistan",
+      "default_locale": "en-PK",
+      "enabled": true
+    },
+    {
+      "key": "ua",
+      "name": "Ukraine",
+      "default_locale": "uk-UA",
+      "enabled": true
     }
   ],
   "surfaces": [
@@ -223,15 +265,16 @@
     {
       "region": "us",
       "key": "reuters_news",
-      "platform": "reuters",
+      "platform": "google_news",
       "surface_type": "news",
       "bucket": "region_local",
       "bucket_weight": 1.0,
-      "entrypoint": "crawler_api.surfaces.reuters_news:collect",
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
       "enabled": true,
       "poll_interval_seconds": 900,
       "max_items_per_run": 40,
       "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US:en",
         "locale": "en-US"
       }
     },
@@ -2811,6 +2854,562 @@
       "config_json": {
         "rss_url": "https://news.google.com/rss?hl=pt-PT&gl=PT&ceid=PT:pt-150",
         "locale": "pt-PT"
+      }
+    },
+    {
+      "region": "gb",
+      "key": "google_news_gb",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en-GB&gl=GB&ceid=GB:en",
+        "locale": "en-GB"
+      }
+    },
+    {
+      "region": "au",
+      "key": "google_news_au",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en-AU&gl=AU&ceid=AU:en",
+        "locale": "en-AU"
+      }
+    },
+    {
+      "region": "ca",
+      "key": "google_news_ca",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en-CA&gl=CA&ceid=CA:en",
+        "locale": "en-CA"
+      }
+    },
+    {
+      "region": "mx",
+      "key": "google_news_mx",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=es&gl=MX&ceid=MX:es",
+        "locale": "es-MX"
+      }
+    },
+    {
+      "region": "in",
+      "key": "google_news_in_en",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
+        "locale": "en-IN"
+      }
+    },
+    {
+      "region": "ng",
+      "key": "google_news_ng",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en&gl=NG&ceid=NG:en",
+        "locale": "en-NG"
+      }
+    },
+    {
+      "region": "pk",
+      "key": "google_news_pk",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=en&gl=PK&ceid=PK:en",
+        "locale": "en-PK"
+      }
+    },
+    {
+      "region": "ua",
+      "key": "google_news_ua",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=uk&gl=UA&ceid=UA:uk",
+        "locale": "uk-UA"
+      }
+    },
+    {
+      "region": "gb",
+      "key": "reddit_unitedkingdom",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "unitedkingdom",
+        "limit": 50
+      }
+    },
+    {
+      "region": "au",
+      "key": "reddit_australia",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "australia",
+        "limit": 50
+      }
+    },
+    {
+      "region": "ca",
+      "key": "reddit_canada",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "canada",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_europe",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "europe",
+        "limit": 50
+      }
+    },
+    {
+      "region": "ua",
+      "key": "reddit_ukraine",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "ukraine",
+        "limit": 50
+      }
+    },
+    {
+      "region": "ng",
+      "key": "reddit_africa",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "africa",
+        "limit": 50
+      }
+    },
+    {
+      "region": "my",
+      "key": "google_trends_my",
+      "platform": "google_trends",
+      "surface_type": "trending",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_trends:collect",
+      "enabled": true,
+      "poll_interval_seconds": 10800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "geo": "MY",
+        "locale": "ms-MY",
+        "max_daily": 20,
+        "max_realtime": 10,
+        "include_realtime": true
+      }
+    },
+    {
+      "region": "ph",
+      "key": "google_trends_ph",
+      "platform": "google_trends",
+      "surface_type": "trending",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_trends:collect",
+      "enabled": true,
+      "poll_interval_seconds": 10800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "geo": "PH",
+        "locale": "en-PH",
+        "max_daily": 20,
+        "max_realtime": 10,
+        "include_realtime": true
+      }
+    },
+    {
+      "region": "th",
+      "key": "google_trends_th",
+      "platform": "google_trends",
+      "surface_type": "trending",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_trends:collect",
+      "enabled": true,
+      "poll_interval_seconds": 10800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "geo": "TH",
+        "locale": "th-TH",
+        "max_daily": 20,
+        "max_realtime": 10,
+        "include_realtime": true
+      }
+    },
+    {
+      "region": "se",
+      "key": "google_trends_se",
+      "platform": "google_trends",
+      "surface_type": "trending",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_trends:collect",
+      "enabled": true,
+      "poll_interval_seconds": 10800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "geo": "SE",
+        "locale": "sv-SE",
+        "max_daily": 20,
+        "max_realtime": 10,
+        "include_realtime": true
+      }
+    },
+    {
+      "region": "my",
+      "key": "reddit_malaysia",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "malaysia",
+        "limit": 50
+      }
+    },
+    {
+      "region": "ph",
+      "key": "reddit_philippines",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "philippines",
+        "limit": 50
+      }
+    },
+    {
+      "region": "se",
+      "key": "reddit_sweden",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "hot_now",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "sweden",
+        "limit": 50
+      }
+    },
+    {
+      "region": "gb",
+      "key": "ft_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Aft.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-GB"
+      }
+    },
+    {
+      "region": "gb",
+      "key": "economist_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Aeconomist.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-GB"
+      }
+    },
+    {
+      "region": "us",
+      "key": "bloomberg_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Abloomberg.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "ng",
+      "key": "allafrica_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Aallafrica.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-NG"
+      }
+    },
+    {
+      "region": "ng",
+      "key": "nation_africa_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Anation.africa&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-NG"
+      }
+    },
+    {
+      "region": "ng",
+      "key": "punchng_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Apunchng.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-NG"
+      }
+    },
+    {
+      "region": "ar",
+      "key": "almonitor_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Aal-monitor.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "ar",
+      "key": "mee_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Amiddleeasteye.net&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "pk",
+      "key": "dawn_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Adawn.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-PK"
+      }
+    },
+    {
+      "region": "in",
+      "key": "thehindu_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Athehindu.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-IN"
+      }
+    },
+    {
+      "region": "mx",
+      "key": "eluniversal_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Aeluniversal.com.mx&hl=en-US&gl=US&ceid=US:en",
+        "locale": "es-MX"
+      }
+    },
+    {
+      "region": "us",
+      "key": "cnbc_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Acnbc.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-US"
+      }
+    },
+    {
+      "region": "us",
+      "key": "wsj_news",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss/search?q=site%3Awsj.com&hl=en-US&gl=US&ceid=US:en",
+        "locale": "en-US"
       }
     }
   ],
