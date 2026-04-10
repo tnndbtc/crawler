@@ -2652,6 +2652,166 @@
         "locale": "pt-BR",
         "source_name": "globo_g1_rss"
       }
+    },
+    {
+      "region": "us",
+      "key": "reddit_worldnews",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "worldnews",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_news",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "news",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_technology",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "category_tech",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "technology",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_economics",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "Economics",
+        "limit": 50
+      }
+    },
+    {
+      "region": "fr",
+      "key": "google_news_fr",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=fr&gl=FR&ceid=FR:fr",
+        "locale": "fr-FR"
+      }
+    },
+    {
+      "region": "de",
+      "key": "google_news_de",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=de&gl=DE&ceid=DE:de",
+        "locale": "de-DE"
+      }
+    },
+    {
+      "region": "es",
+      "key": "google_news_es",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=es&gl=ES&ceid=ES:es",
+        "locale": "es-ES"
+      }
+    },
+    {
+      "region": "it",
+      "key": "google_news_it",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it",
+        "locale": "it-IT"
+      }
+    },
+    {
+      "region": "br",
+      "key": "google_news_br",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "locale": "pt-BR"
+      }
+    },
+    {
+      "region": "pt",
+      "key": "google_news_pt",
+      "platform": "google_news",
+      "surface_type": "news",
+      "bucket": "region_local",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.google_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 900,
+      "max_items_per_run": 50,
+      "config_json": {
+        "rss_url": "https://news.google.com/rss?hl=pt-PT&gl=PT&ceid=PT:pt-150",
+        "locale": "pt-PT"
+      }
     }
   ],
   "translation": {
