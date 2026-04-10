@@ -3716,6 +3716,57 @@
         "locale": "zh-Hant",
         "source_name": "端传媒 Initium Media"
       }
+    },
+    {
+      "region": "cn",
+      "key": "mingpao_top_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.2,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://news.mingpao.com/rss/pns/s00001.xml"],
+        "locale": "zh-Hant",
+        "source_name": "明報要聞"
+      }
+    },
+    {
+      "region": "cn",
+      "key": "mingpao_finance_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.1,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://news.mingpao.com/rss/pns/s00004.xml"],
+        "locale": "zh-Hant",
+        "source_name": "明報經濟"
+      }
+    },
+    {
+      "region": "cn",
+      "key": "mingpao_china_rss",
+      "platform": "rss",
+      "surface_type": "news",
+      "bucket": "news",
+      "bucket_weight": 1.3,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": ["https://news.mingpao.com/rss/pns/s00013.xml"],
+        "locale": "zh-Hant",
+        "source_name": "明報中國"
+      }
     }
   ],
   "translation": {

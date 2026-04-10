@@ -88,6 +88,14 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'G7', 'G20', 'UN ', 'United Nations', 'Xi Jinping', 'Putin',
         'Trump', 'Biden', 'Modi', 'Macron', 'chancellor', 'prime minister',
         'tariff', 'tariffs', 'diplomat', 'diplomacy', 'geopolit',
+        # Conflict and military
+        'Iran', 'Israel', 'Gaza', 'Lebanon', 'Palestine', 'Ukraine',
+        'airstrike', 'airstrikes', 'ceasefire', 'cease-fire',
+        'troops', 'soldiers', 'Pentagon', 'warzone', 'occupation',
+        'Hezbollah', 'Hamas', 'Kremlin', 'Zelensky', 'Netanyahu',
+        # Immigration / border
+        'Border Patrol', 'deport', 'deportation', 'deportee',
+        'asylum seeker', 'asylum seekers', 'undocumented immigrant',
         # China-global politics
         'Taiwan strait', 'Taiwan Strait', '台海', 'South China Sea', '南海',
         'one country two systems', 'NPC ', 'Belt and Road', 'BRI ',
@@ -107,6 +115,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'China tariff', 'trade war', 'decoupling', 'supply chain China',
         'RCEP', 'AIIB',
         '美联储', '通胀', '经济', '股市', '加息', '降息',
+        # Japanese
+        '株価', '投資', '金融',
     ],
     'ai': [
         'LLM', ' GPT', 'Claude', 'Gemini', 'Llama', ' AI ', ' AI,', ' AI.',
@@ -118,6 +128,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         # China AI
         'DeepSeek', 'Kimi ', 'Ernie Bot', 'Wenxin', 'PanGu',
         'AI regulation China', 'Chinese AI',
+        # Japanese
+        'AI技術', '人工知能',
     ],
     'tech': [
         'Apple', 'Google', 'Microsoft', 'Meta', 'Amazon', 'Tesla',
@@ -128,6 +140,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'Huawei', 'Kirin chip', 'HarmonyOS', 'SMIC', 'TSMC',
         'ByteDance', 'TikTok', 'Douyin', ' DJI', ' BYD', 'CATL',
         'chip sanctions', 'export controls', 'chip ban',
+        # Japanese
+        'テクノロジー', 'スマートフォン', '技術革新',
     ],
     'science': [
         'researchers', 'scientists', 'research paper', 'new study',
@@ -135,24 +149,32 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'genome', 'quantum', 'CERN', 'telescope', 'NASA ', 'SpaceX',
         'climate change', 'carbon emissions', 'new species', 'biology',
         'physics', 'chemistry', 'experiment',
+        # Japanese
+        '科学', '研究', '宇宙',
     ],
     'health': [
         'vaccine', 'vaccination', 'virus', 'pandemic', 'outbreak',
         ' FDA', ' WHO', 'cancer', ' drug ', 'hospital', 'patient',
         'treatment', 'mental health', 'obesity', 'diabetes', 'COVID',
         'disease', 'epidemic', 'public health',
+        # Japanese
+        '健康', '医療', '病院',
     ],
     'sports': [
         'NFL', 'NBA', 'FIFA', 'Premier League', 'Champions League',
         'Olympics', 'World Cup', 'tournament', 'championship',
         'transfer', 'match result', 'season opener', 'Grand Slam',
         'Formula 1', 'F1 ', 'Super Bowl', 'playoff',
+        # Japanese
+        '野球', 'スポーツ', 'サッカー', 'バスケ',
     ],
     'entertainment': [
         ' movie', ' film', 'Netflix', 'Disney', 'box office', 'Oscar',
         'Grammy', 'music album', 'singer', ' actor', 'celebrity',
         'Taylor Swift', 'BTS', 'K-pop', 'anime', 'video game',
         'PlayStation', 'Xbox', 'Nintendo', 'streaming',
+        # Japanese
+        'アニメ', '映画', 'ゲーム', 'ドラマ', '音楽',
     ],
     'business': [
         'merger', 'acquisition', 'layoff', 'layoffs', 'CEO', 'revenue',
@@ -161,6 +183,8 @@ KEYWORD_MAP: dict[str, list[str]] = {
         # China business
         'Alibaba', 'Tencent', 'JD.com', 'Pinduoduo', 'Meituan', 'Xiaomi',
         'Ant Group', 'DiDi', 'Chinese EV', 'lithium supply chain',
+        # Japanese
+        'ビジネス', '経営', '企業',
     ],
     'crime': [
         'arrested', 'charged with', 'murder', 'shooting', 'attack',
@@ -173,9 +197,10 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'Paris Agreement', 'net zero', 'biodiversity', 'pollution',
     ],
     'society': [
-        'immigration', 'migrants', 'protest', 'protesters', 'strike',
-        'labor union', 'inequality', 'poverty', 'education', 'university',
+        'immigration', 'migrants', 'refugee', 'refugees', 'protest', 'protesters',
+        'strike', 'labor union', 'inequality', 'poverty', 'education', 'university',
         'demographic', 'religion', 'culture war', 'social media',
+        'family separation', 'human rights',
     ],
 }
 
@@ -258,6 +283,123 @@ def _classify_by_locale_fallback(lang_group: str | None, platform: str) -> list[
 
 
 # ---------------------------------------------------------------------------
+# Signal 5: Surface key fallback (LOW–MEDIUM confidence)
+# Fires only when all other signals produce nothing. Maps well-known surfaces
+# (specific subreddits, news RSS feeds, Google News editions) to their dominant
+# topic domain. Provides a baseline rather than leaving items permanently empty.
+# ---------------------------------------------------------------------------
+
+SURFACE_TOPIC_MAP: dict[str, list[str]] = {
+    # Reddit — topic-specific subreddits (high confidence)
+    'reddit_worldnews':      ['politics'],
+    'reddit_news':           ['politics', 'society'],
+    'reddit_economics':      ['finance', 'business'],
+    'reddit_geopolitics':    ['politics'],
+    'reddit_ukraine':        ['politics'],
+    # Reddit — regional/country subreddits (medium confidence — general community boards)
+    'reddit_europe':         ['politics', 'society'],
+    'reddit_unitedkingdom':  ['politics', 'society'],
+    'reddit_france':         ['politics', 'society'],
+    'reddit_de':             ['politics', 'society'],
+    'reddit_arabs':          ['politics', 'society'],
+    'reddit_turkey':         ['politics', 'society'],
+    'reddit_africa':         ['politics', 'society'],
+    'reddit_india':          ['politics', 'society'],
+    'reddit_philippines':    ['politics', 'society'],
+    'reddit_askARussian':    ['politics', 'society'],
+    'reddit_poland':         ['politics', 'society'],
+    'reddit_brasil':         ['society'],
+    'reddit_argentina':      ['society'],
+    'reddit_mexico':         ['society'],
+    'reddit_italy':          ['society'],
+    'reddit_sweden':         ['society'],
+    'reddit_es':             ['society'],
+    'reddit_australia':      ['society'],
+    'reddit_canada':         ['society'],
+    'reddit_malaysia':       ['society'],
+    # News RSS feeds — rss platform
+    'g1_rss':                ['politics', 'society'],
+    'aajtak_rss':            ['politics', 'society'],
+    'cumhuriyet_rss':        ['politics', 'society'],
+    'folha_rss':             ['politics', 'society'],
+    'aljazeera_ar_rss':      ['politics'],
+    'onet_rss':              ['politics', 'society'],
+    'tass_rss':              ['politics'],
+    'spiegel_rss':           ['politics', 'society'],
+    'nhk_news_rss':          ['politics', 'society'],
+    'tvn24_rss':             ['politics', 'society'],
+    'ansa_rss':              ['politics', 'society'],
+    'meduza_rss':            ['politics', 'society'],
+    'france24_ar_rss':       ['politics'],
+    'zeit_rss':              ['politics', 'society'],
+    'bbc_hindi_rss':         ['politics', 'society'],
+    'bbcarabic_rss':         ['politics', 'society'],
+    'elpais_rss':            ['politics', 'society'],
+    'lemonde_rss':           ['politics', 'society'],
+    'dw_ru_rss':             ['politics', 'society'],
+    'dw_ar_rss':             ['politics', 'society'],
+    'rfi_rss':               ['politics', 'society'],
+    '36kr_rss':              ['tech', 'business'],
+    # News RSS feeds — generic_rss platform
+    'portugal_news_rss':     ['politics', 'society'],
+    'vnexpress_rss':         ['politics', 'society'],
+    'sweden_news_rss':       ['politics', 'society'],
+    'india_english_news_rss':['politics', 'society'],
+    'globo_g1_rss':          ['politics', 'society'],
+    'argentina_news_rss':    ['politics', 'society'],
+    'nunl_rss':              ['politics', 'society'],
+    'thailand_news_rss':     ['politics', 'society'],
+    'philippines_news_rss':  ['politics', 'society'],
+    # Dedicated news platform surfaces
+    'bbc_news':              ['politics', 'society'],
+    'guardian_news':         ['politics', 'society'],
+    'reuters_news':          ['politics', 'business'],
+    'aljazeera_news':        ['politics', 'society'],
+    # Google News regional editions
+    'google_news':           ['politics', 'society'],
+    'google_news_de':        ['politics', 'society'],
+    'google_news_br':        ['politics', 'society'],
+    'google_news_fr':        ['politics', 'society'],
+    'google_news_es':        ['politics', 'society'],
+    'google_news_it':        ['politics', 'society'],
+    'google_news_pt':        ['politics', 'society'],
+    'google_news_kr':        ['politics', 'society'],
+    'google_news_gb':        ['politics', 'society'],
+    'google_news_jp':        ['politics', 'society'],
+    'google_news_ua':        ['politics', 'society'],
+    'google_news_in_en':     ['politics', 'society'],
+    'google_news_ca':        ['politics', 'society'],
+    'google_news_pk':        ['politics', 'society'],
+    'google_news_mx':        ['politics', 'society'],
+    'google_news_au':        ['politics', 'society'],
+    'google_news_ng':        ['politics', 'society'],
+    'allafrica_news':        ['politics', 'society'],
+    'thehindu_news':         ['politics', 'society'],
+    'almonitor_news':        ['politics'],
+    'bloomberg_news':        ['finance', 'business'],
+    # Social / trending platforms
+    'weibo_hot':             ['society'],
+    'baidu_hot':             ['society'],
+    'naver_news_ranking':    ['politics', 'society'],
+    'nicovideo_ranking':     ['entertainment'],
+    'hatena_hotentry':       ['tech', 'society'],
+    'wenxuecity_news':       ['society'],
+    'wikipedia_most_read':   ['society'],
+}
+
+
+def _classify_by_surface(surface_key: str) -> list[str]:
+    """
+    Signal 5: surface key fallback — fires only when all other signals fail.
+
+    Maps well-known surfaces to their dominant topic domain. Returns [] for
+    unknown surfaces (e.g. reddit_hot, google_trends) that are too generic
+    to assign a meaningful label.
+    """
+    return SURFACE_TOPIC_MAP.get(surface_key, [])
+
+
+# ---------------------------------------------------------------------------
 # Main classification function
 # ---------------------------------------------------------------------------
 
@@ -303,5 +445,10 @@ def classify_topic_tags(
     fallback = _classify_by_locale_fallback(lang_group, platform)
     if fallback:
         return fallback
+
+    # Signal 5: surface key fallback — last resort before giving up
+    surface_tags = _classify_by_surface(surface_key)
+    if surface_tags:
+        return sorted(set(surface_tags) & VALID_TOPICS)
 
     return []  # unclassifiable — caller passes to LLM pass
