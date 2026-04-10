@@ -445,6 +445,19 @@ class TrendItem(models.Model):
         help_text="When hotness score was last computed"
     )
 
+    # Content-based region classification (multi-label)
+    content_regions = models.JSONField(
+        default=list, blank=True,
+        help_text="Regions the content is ABOUT (multi-label). "
+                  "Empty list = not yet classified or no specific region. "
+                  "Example: ['cn', 'us'] for US-China trade war article."
+    )
+    primary_region = models.CharField(
+        max_length=10, null=True, blank=True, db_index=True,
+        help_text="Main region the content is about (first non-US from "
+                  "content_regions). Used for fast indexed queries."
+    )
+
     class Meta:
         ordering = ['-collected_at']
         verbose_name = "Trend Item"

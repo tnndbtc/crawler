@@ -121,6 +121,9 @@ is_service_running() {
         summarization_worker)
             process_pid=$(ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             ;;
+        region_classifier_worker)
+            process_pid=$(ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
     esac
 
     if [ ! -z "$process_pid" ]; then
@@ -172,6 +175,9 @@ get_service_pid() {
             ;;
         summarization_worker)
             ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        region_classifier_worker)
+            ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
             ;;
         *)
             echo ""
@@ -360,6 +366,9 @@ stop_service() {
         summarization_worker)
             all_pids=$(ps aux | grep -E "summarization_worker\.(py|sh)|tee.*summarization_worker" | grep -v grep | awk '{print $2}')
             ;;
+        region_classifier_worker)
+            all_pids=$(ps aux | grep -E "region_classifier_worker\.(py|sh)|tee.*region_classifier_worker" | grep -v grep | awk '{print $2}')
+            ;;
     esac
 
     # Also include PID file pid
@@ -494,6 +503,13 @@ load_seeds()
         print_info "Summarization Worker: DISABLED (ENABLE_SUMMARIZATION_WORKER=false in .env)"
     fi
 
+    if [ "${ENABLE_REGION_CLASSIFIER:-true}" = "true" ]; then
+        start_service "region_classifier_worker" "Region Classifier Worker" \
+            "${SCRIPT_DIR}/scripts/run_region_classifier_worker.sh"
+    else
+        print_info "Region Classifier Worker: DISABLED (ENABLE_REGION_CLASSIFIER=false in .env)"
+    fi
+
     echo ""
     print_success "All services started!"
     print_info "Use option 5 to check service status"
@@ -506,6 +522,7 @@ stop_all_services() {
 
     # Step 1: Stop tracked services (original behavior)
     print_step "Stopping tracked services..."
+    stop_service "region_classifier_worker" "Region Classifier Worker"
     stop_service "summarization_worker" "Summarization Worker"
     stop_service "hotness_worker" "Hotness Worker"
     stop_service "translation_worker" "Translation Worker"
@@ -578,7 +595,7 @@ restart_all_services() {
 start_or_restart_services() {
     # If anything is running, restart. Otherwise just start.
     local any_running=false
-    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker; do
+    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker region_classifier_worker; do
         if is_service_running "$svc"; then
             any_running=true
             break
@@ -602,6 +619,7 @@ show_service_status() {
         "translation_worker:Translation Worker:-"
         "hotness_worker:Hotness Worker:-"
         "summarization_worker:Summarization Worker:-"
+        "region_classifier_worker:Region Classifier Worker:-"
     )
 
     echo -e "${BOLD}Service                    Status      PID       Port${NC}"

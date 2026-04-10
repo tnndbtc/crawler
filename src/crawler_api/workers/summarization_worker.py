@@ -282,7 +282,7 @@ async def _run_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT_SINGLE) -> str:
     try:
         process = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
-                'claude', '-p', prompt,
+                'claude', '-p', '--model', 'sonnet', prompt,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             ),

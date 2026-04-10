@@ -317,7 +317,7 @@ class ClaudeEngine(BaseTranslationEngine):
         try:
             process = await asyncio.wait_for(
                 asyncio.create_subprocess_exec(
-                    'claude', '-p', '--model', 'opus', prompt,
+                    'claude', '-p', '--model', 'sonnet', prompt,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 ),
