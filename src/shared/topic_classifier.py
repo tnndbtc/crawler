@@ -11,6 +11,10 @@ Fixed vocabulary (12 labels):
   sports, business, crime, society, health, environment
 
 Returns [] when unclassifiable — those items are passed to the LLM pass.
+
+Hot-reload: call reload_keywords_if_updated() each worker cycle to pick up
+new auto_keywords.json without restarting the process. Returns True if
+patterns were reloaded (caller should reset "Tried, no tags" items).
 """
 
 import json
@@ -23,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Path to the auto-generated keyword file produced by keyword_harvest_worker.py
 _AUTO_KEYWORDS_PATH = Path(__file__).parent.parent.parent / 'config' / 'auto_keywords.json'
+
+# Last-seen mtime of auto_keywords.json — used for hot-reload detection
+_AUTO_KEYWORDS_MTIME: float = 0.0
 
 VALID_TOPICS: frozenset[str] = frozenset({
     'politics', 'finance', 'ai', 'tech', 'science',
@@ -211,10 +218,31 @@ KEYWORD_MAP: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 
 def _load_auto_keywords() -> dict[str, list[str]]:
+    """
+    Load auto_keywords.json and return {topic: [term, ...]} for pattern building.
+
+    Handles three entry formats (backwards compatible):
+      - Plain string:            "Zelensky"          → term = "Zelensky"
+      - Old object (no score):   {"term": "..."}     → term = entry["term"]
+      - New object (with score): {"term": "...", "last_seen": "...", "score": N}
+                                                     → term = entry["term"]
+    """
     try:
         with open(_AUTO_KEYWORDS_PATH) as f:
             data = json.load(f)
-        return data.get('keywords', {})
+        raw = data.get('keywords', {})
+        result: dict[str, list[str]] = {}
+        for topic, entries in raw.items():
+            terms = []
+            for entry in entries:
+                if isinstance(entry, str):
+                    terms.append(entry)
+                elif isinstance(entry, dict):
+                    term = entry.get('term')
+                    if term and isinstance(term, str):
+                        terms.append(term)
+            result[topic] = terms
+        return result
     except FileNotFoundError:
         return {}  # first deploy: file not yet generated, safe to skip
     except (json.JSONDecodeError, OSError) as e:
@@ -237,8 +265,37 @@ def _build_keyword_patterns() -> dict[str, list[re.Pattern]]:
     return patterns
 
 
-# Pre-compile case-insensitive patterns once at module load time
+# Pre-compile case-insensitive patterns at module load time.
+# Use reload_keywords_if_updated() to hot-reload without restarting.
 _KEYWORD_PATTERNS: dict[str, list[re.Pattern]] = _build_keyword_patterns()
+
+
+def reload_keywords_if_updated() -> bool:
+    """
+    Check if auto_keywords.json has changed since last load.
+    If so, rebuild _KEYWORD_PATTERNS in-place and return True.
+    Returns False if nothing changed or the file is absent.
+
+    Call this once per worker cycle (e.g. in run_worker_loop before run_once).
+    When True is returned, the caller should reset "Tried, no tags" items so
+    the heuristic gets a second chance with the new keywords before LLM runs.
+    """
+    global _KEYWORD_PATTERNS, _AUTO_KEYWORDS_MTIME
+    try:
+        mtime = _AUTO_KEYWORDS_PATH.stat().st_mtime
+    except FileNotFoundError:
+        return False
+
+    if mtime <= _AUTO_KEYWORDS_MTIME:
+        return False  # file unchanged
+
+    _KEYWORD_PATTERNS = _build_keyword_patterns()
+    _AUTO_KEYWORDS_MTIME = mtime
+    logger.info(
+        f"auto_keywords.json updated (mtime={mtime:.0f}) — "
+        f"keyword patterns reloaded across {len(_KEYWORD_PATTERNS)} topics"
+    )
+    return True
 
 
 def _classify_by_keywords(title: str, description: str | None = None) -> list[str]:

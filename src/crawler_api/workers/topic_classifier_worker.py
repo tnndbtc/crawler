@@ -7,6 +7,10 @@ remaining ambiguous items that are within the top N% hotness per locale
 
 Polls every 10 minutes for unclassified items (topic_tags=[], topic_classified_at IS NULL).
 
+Hot-reload: each cycle checks if auto_keywords.json has changed. If so,
+patterns are reloaded and all "Tried, no tags" items are reset so the
+heuristic gets a second chance before LLM runs — saving LLM cost.
+
 Enable/disable via ENABLE_TOPIC_CLASSIFIER in .env.
 LLM pass enable/disable via ENABLE_TOPIC_LLM in .env.
 """
@@ -23,7 +27,7 @@ django.setup()
 
 from django.utils import timezone
 from crawler_admin.models import TrendItem
-from shared.topic_classifier import classify_topic_tags, VALID_TOPICS
+from shared.topic_classifier import classify_topic_tags, reload_keywords_if_updated, VALID_TOPICS
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +77,7 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
         if tags:
             item.topic_tags = tags
             item.topic_classified_at = now
+            item.classified_by = 'heuristic'
             classified_items.append(item)
         else:
             remaining.append(item)
@@ -80,7 +85,7 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
     if classified_items:
         TrendItem.objects.bulk_update(
             classified_items,
-            ['topic_tags', 'topic_classified_at'],
+            ['topic_tags', 'topic_classified_at', 'classified_by'],
             batch_size=500,
         )
         logger.debug(f"bulk_update wrote {len(classified_items)} classified items")
@@ -181,13 +186,14 @@ def run_llm_pass(items: list) -> int:
 
         for item, tags in zip(batch, results):
             item.topic_classified_at = now
+            item.classified_by = 'llm'
             if tags:
                 item.topic_tags = sorted(set(tags) & VALID_TOPICS)
-                item.save(update_fields=['topic_tags', 'topic_classified_at'])
+                item.save(update_fields=['topic_tags', 'topic_classified_at', 'classified_by'])
                 classified += 1
             else:
                 # LLM returned no tags — mark as attempted to avoid re-processing
-                item.save(update_fields=['topic_classified_at'])
+                item.save(update_fields=['topic_classified_at', 'classified_by'])
 
     return classified
 
@@ -237,6 +243,28 @@ def run_once():
         logger.info(f"Marked {len(not_sent)} low-hotness items as tried (skip LLM)")
 
 
+def reset_tried_no_tags() -> int:
+    """
+    Reset topic_classified_at for all "Tried, no tags" items so they re-enter
+    the heuristic queue on the next cycle.
+
+    Called after a keyword hot-reload so newly added keywords get a chance to
+    classify items that previously fell through — before spending LLM budget.
+
+    Returns the number of items reset.
+    """
+    count = TrendItem.objects.filter(
+        topic_tags=[],
+        topic_classified_at__isnull=False,
+    ).update(topic_classified_at=None, classified_by=None)
+    if count:
+        logger.info(
+            f"Keyword hot-reload: reset {count} 'Tried, no tags' items "
+            f"→ heuristic will re-run on next cycle (LLM only for remaining misses)"
+        )
+    return count
+
+
 def run_worker_loop():
     """Main worker loop — polls every POLL_INTERVAL seconds."""
     logger.info("Topic classifier worker started")
@@ -244,6 +272,12 @@ def run_worker_loop():
 
     while True:
         try:
+            # Hot-reload keywords if auto_keywords.json changed.
+            # On reload, reset "Tried, no tags" so heuristic runs first (free)
+            # before LLM is considered for remaining misses.
+            if reload_keywords_if_updated():
+                reset_tried_no_tags()
+
             run_once()
         except Exception as e:
             logger.error(f"Topic classification cycle error: {e}", exc_info=True)

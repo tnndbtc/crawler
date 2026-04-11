@@ -1,15 +1,26 @@
 """
-Keyword harvest worker — weekly self-improving keyword extraction.
+Keyword harvest worker — hourly self-improving keyword extraction.
 
-Extracts high-frequency named entities from LLM-classified TrendItems
-(items the heuristic missed but LLM rescued), batch-confirms with Claude,
-and writes surviving candidates to crawler/config/auto_keywords.json.
+Extracts named entities from LLM-classified TrendItems (items the heuristic
+missed but LLM rescued), batch-confirms with Claude, and merges surviving
+candidates into crawler/config/auto_keywords.json.
 
-The topic_classifier.py heuristic layer loads auto_keywords.json at startup,
-so new keywords take effect on next worker restart — no code deploy needed.
+Key design decisions:
+  - Incremental window: each run queries only articles since last_harvested_at,
+    so every article is counted exactly once (no score inflation).
+  - Accumulate + score-based expiry: keywords are never fully overwritten.
+    Each keyword carries a cumulative score and last_seen date.
+    Weak keywords (score < STRONG_THRESHOLD) expire after 30 days of silence.
+    Strong keywords (score >= STRONG_THRESHOLD) expire after 90 days.
+  - classified_by filter: only LLM-classified items are sourced, preventing
+    heuristic-rescued items from polluting keyword learning after a reset.
 
-Schedule: weekly (Sunday 02:00 UTC)
-  cron: 0 2 * * 0  python src/crawler_api/workers/keyword_harvest_worker.py --once
+topic_classifier_worker hot-reloads auto_keywords.json each cycle (no restart
+needed). On reload it resets "Tried, no tags" items so heuristic gets a second
+pass before LLM — saving LLM cost over time.
+
+Schedule: hourly
+  cron: 0 * * * *  python src/crawler_api/workers/keyword_harvest_worker.py --once
 
 Usage:
   python keyword_harvest_worker.py          # run once and exit
@@ -51,8 +62,12 @@ VALID_TOPICS = frozenset({
     'sports', 'business', 'crime', 'society', 'health', 'environment',
 })
 
-HARVEST_WINDOW_DAYS = 7
 CLAUDE_TIMEOUT = 90
+
+# Expiry thresholds
+DEFAULT_STRONG_THRESHOLD = 10   # score >= this → "strong" keyword
+DEFAULT_EXPIRE_DAYS = 30        # weak keywords: expire after N days of silence
+DEFAULT_STRONG_EXPIRE_DAYS = 90 # strong keywords: expire after N days of silence
 
 STOPWORDS_EN = {
     'The', 'This', 'That', 'New', 'Top', 'Big', 'US', 'UK', 'EU', 'UN',
@@ -78,33 +93,33 @@ _RE_NOUN_VERB = re.compile(
 # Step 1 — Find the gap: LLM-classified items the heuristic missed
 # ---------------------------------------------------------------------------
 
-def get_heuristic_missed_items(days: int = HARVEST_WINDOW_DAYS) -> list:
+def get_llm_classified_items(cutoff_start, cutoff_end) -> list:
     """
-    Items where:
-      - topic_classified_at IS NOT NULL  (LLM ran on this item)
-      - topic_tags != []                 (LLM successfully tagged it)
+    Items classified by LLM since the last harvest run.
 
-    These are items the heuristic missed but LLM rescued — the current
-    blind spots of the keyword list.
+    Uses classified_by='llm' to source only genuine LLM rescues — heuristic-
+    rescued items are excluded even if they were reset and re-classified after
+    a keyword hot-reload. This keeps keyword learning signal pure.
 
-    DEPENDENCY: This correctly isolates heuristic-missed items only because
-    topic_classifier_worker.py runs LLM exclusively on items where
-    topic_tags == [] after the heuristic pass. If that constraint changes,
-    this query must be updated accordingly.
+    cutoff_start: timezone-aware datetime (last_harvested_at from SystemSettings)
+    cutoff_end:   timezone-aware datetime (now, captured before query)
     """
-    cutoff = timezone.now() - timedelta(days=days)
     items = (
         TrendItem.objects
         .filter(
-            collected_at__gte=cutoff,
-            topic_classified_at__isnull=False,
+            collected_at__gt=cutoff_start,
+            collected_at__lte=cutoff_end,
+            classified_by='llm',
         )
         .exclude(topic_tags=[])
         .select_related('surface')
         .only('id', 'title_original', 'canonical_title', 'topic_tags', 'lang_group')
     )
     result = list(items)
-    logger.info(f"Step 1: found {len(result)} LLM-classified items in last {days} days")
+    logger.info(
+        f"Step 1: found {len(result)} LLM-classified items "
+        f"between {cutoff_start.isoformat()} and {cutoff_end.isoformat()}"
+    )
     return result
 
 
@@ -338,36 +353,149 @@ Return exactly {len(candidates)} entries."""
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Write auto_keywords.json
+# Step 5 — Load existing keywords + merge + expire + write
 # ---------------------------------------------------------------------------
 
-def write_auto_keywords(confirmed: list[dict]) -> None:
+def load_existing_keywords() -> dict[str, dict[str, dict]]:
     """
-    Full regeneration of auto_keywords.json from confirmed candidates.
+    Load auto_keywords.json and return existing keyword state as:
+      {topic: {term: {"last_seen": "YYYY-MM-DD", "score": N}}}
 
-    File is overwritten each run — not appended. Stale keywords from
-    topics that fell out of relevance are automatically removed.
-    Git history provides the audit trail.
+    Handles three entry formats (backwards compatible):
+      - Plain string:            "Zelensky"
+      - Old object (no score):   {"term": "Zelensky", "last_seen": "..."}
+      - New object (with score): {"term": "Zelensky", "last_seen": "...", "score": N}
+
+    Missing file → returns {} (first run, safe).
+    Corrupt/unreadable file → logs warning, returns {} (safe fallback).
     """
-    keywords: dict[str, list[str]] = defaultdict(list)
+    today = timezone.now().strftime('%Y-%m-%d')
+    try:
+        with open(AUTO_KEYWORDS_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+        raw = data.get('keywords', {})
+        result: dict[str, dict[str, dict]] = {}
+        for topic, entries in raw.items():
+            topic_kws: dict[str, dict] = {}
+            for entry in entries:
+                if isinstance(entry, str):
+                    topic_kws[entry] = {'last_seen': today, 'score': 1}
+                elif isinstance(entry, dict):
+                    term = entry.get('term')
+                    if term and isinstance(term, str):
+                        topic_kws[term] = {
+                            'last_seen': entry.get('last_seen', today),
+                            'score': int(entry.get('score', 1)),
+                        }
+            result[topic] = topic_kws
+        logger.info(
+            f"Loaded {sum(len(v) for v in result.values())} existing keywords "
+            f"across {len(result)} topics from {AUTO_KEYWORDS_PATH}"
+        )
+        return result
+    except FileNotFoundError:
+        logger.info("auto_keywords.json not found — starting fresh (first run)")
+        return {}
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"auto_keywords.json unreadable ({e}); starting from empty state")
+        return {}
+
+
+def write_auto_keywords(confirmed: list[dict], cutoff_end) -> None:
+    """
+    Merge newly confirmed candidates into existing auto_keywords.json.
+
+    For each confirmed candidate:
+      - If term already exists: score += new_count, last_seen = today
+      - If new term: score = new_count, last_seen = today
+
+    Then apply two-tier expiry:
+      - score >= STRONG_THRESHOLD: drop if silent > strong_expire_days
+      - score <  STRONG_THRESHOLD: drop if silent > expire_days
+
+    Writes merged result back to file (not a full overwrite — accumulates
+    over time so keywords survive quiet periods).
+    """
+    today = timezone.now().strftime('%Y-%m-%d')
+
+    strong_threshold = int(SystemSettings.get_setting(
+        'harvest_strong_threshold', default=DEFAULT_STRONG_THRESHOLD))
+    expire_days = int(SystemSettings.get_setting(
+        'harvest_expire_days', default=DEFAULT_EXPIRE_DAYS))
+    strong_expire_days = int(SystemSettings.get_setting(
+        'harvest_strong_expire_days', default=DEFAULT_STRONG_EXPIRE_DAYS))
+
+    # Load existing state
+    existing = load_existing_keywords()
+
+    # Merge confirmed candidates into existing state
+    added = 0
+    updated = 0
     for c in confirmed:
-        keywords[c['context_topic']].append(c['term'])
+        topic = c['context_topic']
+        term = c['term']
+        new_count = c['total_count']
+
+        if topic not in existing:
+            existing[topic] = {}
+
+        if term in existing[topic]:
+            existing[topic][term]['score'] += new_count
+            existing[topic][term]['last_seen'] = today
+            updated += 1
+        else:
+            existing[topic][term] = {'last_seen': today, 'score': new_count}
+            added += 1
+
+    logger.info(f"Step 5 merge: {added} new keywords added, {updated} existing updated")
+
+    # Apply expiry — two-tier based on score
+    from datetime import date
+    today_date = date.today()
+    expired = 0
+    for topic in list(existing.keys()):
+        surviving = {}
+        for term, kw in existing[topic].items():
+            try:
+                last_seen_date = date.fromisoformat(kw['last_seen'])
+            except (ValueError, KeyError):
+                last_seen_date = today_date  # malformed → treat as seen today
+            silence_days = (today_date - last_seen_date).days
+            threshold = strong_expire_days if kw['score'] >= strong_threshold else expire_days
+            if silence_days <= threshold:
+                surviving[term] = kw
+            else:
+                expired += 1
+        existing[topic] = surviving
+
+    if expired:
+        logger.info(f"Step 5 expiry: dropped {expired} keywords past silence threshold")
+
+    # Serialise to list format
+    output_keywords: dict[str, list] = {}
+    for topic, kws in existing.items():
+        if kws:  # skip empty topics
+            output_keywords[topic] = [
+                {'term': term, 'last_seen': kw['last_seen'], 'score': kw['score']}
+                for term, kw in sorted(kws.items())
+            ]
 
     output = {
         'generated_at': timezone.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'keywords': dict(keywords),
+        'keywords': output_keywords,
     }
 
     AUTO_KEYWORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(AUTO_KEYWORDS_PATH, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    total = sum(len(v) for v in keywords.values())
+    total = sum(len(v) for v in output_keywords.values())
     logger.info(
-        f"Step 5: wrote {total} keywords across {len(keywords)} topics "
+        f"Step 5: wrote {total} keywords across {len(output_keywords)} topics "
         f"to {AUTO_KEYWORDS_PATH}"
     )
-    for topic, terms in sorted(keywords.items()):
+    for topic, entries in sorted(output_keywords.items()):
+        terms = [e['term'] for e in entries]
         logger.info(f"  {topic}: {terms}")
 
 
@@ -378,36 +506,81 @@ def write_auto_keywords(confirmed: list[dict]) -> None:
 def run_harvest() -> None:
     logger.info("=== Keyword harvest job starting ===")
 
-    # Read configurable frequency threshold from admin settings
-    min_freq = int(SystemSettings.get_setting('harvest_min_freq', default=20))
-    logger.info(f"Config: HARVEST_WINDOW_DAYS={HARVEST_WINDOW_DAYS}, min_freq={min_freq}")
+    # Incremental window: only articles since last harvest run
+    cutoff_end = timezone.now()
+    last_harvested_raw = SystemSettings.get_setting('last_harvested_at', default=None)
+    if last_harvested_raw:
+        from django.utils.dateparse import parse_datetime
+        cutoff_start = parse_datetime(last_harvested_raw)
+        if cutoff_start is None:
+            # Malformed value — fall back to 1 hour ago
+            logger.warning(f"Could not parse last_harvested_at='{last_harvested_raw}'; using 1h ago")
+            cutoff_start = cutoff_end - timedelta(hours=1)
+    else:
+        # First ever run — look back 1 hour
+        cutoff_start = cutoff_end - timedelta(hours=1)
+        logger.info("No last_harvested_at found — first run, looking back 1 hour")
 
-    # Step 1 — find LLM-rescued items
-    items = get_heuristic_missed_items(days=HARVEST_WINDOW_DAYS)
+    min_freq = int(SystemSettings.get_setting('harvest_min_freq', default=1))
+    logger.info(
+        f"Config: cutoff_start={cutoff_start.isoformat()}, "
+        f"cutoff_end={cutoff_end.isoformat()}, min_freq={min_freq}"
+    )
+
+    # Step 1 — find LLM-rescued items in incremental window
+    items = get_llm_classified_items(cutoff_start, cutoff_end)
     if not items:
-        logger.info("No LLM-classified items found — nothing to harvest")
+        logger.info("No LLM-classified items in window — nothing to harvest")
+        # Still update last_harvested_at so next run doesn't re-scan this window
+        SystemSettings.set_setting(
+            'last_harvested_at', cutoff_end.isoformat(),
+            description='Timestamp of last keyword harvest run',
+            value_type='string',
+        )
         return
 
     # Step 2 — extract entities
     entity_topic_counts = extract_entities_from_items(items)
     if not entity_topic_counts:
         logger.info("No entities extracted — exiting")
+        SystemSettings.set_setting(
+            'last_harvested_at', cutoff_end.isoformat(),
+            description='Timestamp of last keyword harvest run',
+            value_type='string',
+        )
         return
 
     # Step 3 — frequency + purity filters
     candidates = apply_filters(entity_topic_counts, min_freq=min_freq)
     if not candidates:
         logger.info("No candidates passed filters — exiting")
+        SystemSettings.set_setting(
+            'last_harvested_at', cutoff_end.isoformat(),
+            description='Timestamp of last keyword harvest run',
+            value_type='string',
+        )
         return
 
     # Step 4 — LLM batch confirmation
     confirmed = llm_confirm_candidates(candidates)
     if not confirmed:
         logger.info("No candidates confirmed by LLM — exiting")
+        SystemSettings.set_setting(
+            'last_harvested_at', cutoff_end.isoformat(),
+            description='Timestamp of last keyword harvest run',
+            value_type='string',
+        )
         return
 
-    # Step 5 — write output
-    write_auto_keywords(confirmed)
+    # Step 5 — merge into existing auto_keywords.json
+    write_auto_keywords(confirmed, cutoff_end)
+
+    # Update last_harvested_at AFTER successful write
+    SystemSettings.set_setting(
+        'last_harvested_at', cutoff_end.isoformat(),
+        description='Timestamp of last keyword harvest run',
+        value_type='string',
+    )
 
     logger.info("=== Keyword harvest job complete ===")
 

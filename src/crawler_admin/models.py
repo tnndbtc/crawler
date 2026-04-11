@@ -492,6 +492,15 @@ class TrendItem(models.Model):
             "NULL = never tried."
         ),
     )
+    classified_by = models.CharField(
+        max_length=16,
+        null=True, blank=True,
+        help_text=(
+            "Which classifier set topic_tags: 'heuristic' or 'llm'. "
+            "NULL = not yet classified, or classified before this field existed. "
+            "Used by keyword_harvest_worker to source only LLM-rescued items."
+        ),
+    )
 
     class Meta:
         ordering = ['-collected_at']
