@@ -193,6 +193,14 @@ class TrendSurfaceAdmin(admin.ModelAdmin):
         ('Collector Settings', {
             'fields': ('entrypoint', 'enabled', 'poll_interval_seconds', 'max_items_per_run')
         }),
+        ('Story Selection', {
+            'fields': ('selection_weight',),
+            'description': (
+                'Story engine weight for this surface (1.0 = normal). '
+                'Overridden by story_mix.json surface_weight_overrides if that key is set. '
+                'Use values 0.3–3.0 (outside this range is clamped by the selector).'
+            )
+        }),
         ('Selection Allocation', {
             'fields': ('floor_percent', 'cap_percent'),
             'description': (

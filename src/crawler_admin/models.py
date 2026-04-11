@@ -206,6 +206,15 @@ class TrendSurface(models.Model):
         help_text="When to run next (deprecated, calculated from poll_interval)"
     )
 
+    # Story engine selection weight (Phase 4)
+    selection_weight = models.FloatField(
+        default=1.0,
+        help_text=(
+            "Story engine surface weight (1.0 = normal, >1 = more likely to be selected, "
+            "<1 = less likely). Overridden by story_mix.json surface_weight_overrides if set."
+        )
+    )
+
     class Meta:
         unique_together = [['region', 'key']]
         ordering = ['region', 'key']

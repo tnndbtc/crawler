@@ -385,6 +385,14 @@ SURFACE_TOPIC_MAP: dict[str, list[str]] = {
     'hatena_hotentry':       ['tech', 'society'],
     'wenxuecity_news':       ['society'],
     'wikipedia_most_read':   ['society'],
+    # New surfaces (Phase 1)
+    'sina_news':             ['politics', 'society'],
+    'chinatimes_news':       ['politics', 'society'],
+    # New surfaces (Phase 2 — NYT, pending API key)
+    'nyt_news':              ['politics', 'society'],
+    # New surfaces (Phase 3 — Playwright)
+    'hk01_news':             ['politics', 'society'],
+    'mirrormedia_news':      ['politics', 'society'],
 }
 
 
