@@ -340,6 +340,36 @@ async def run_worker_loop():
                         continue
 
                 logger.info(f"Completed {len(due_surfaces)} surface(s)")
+
+                # Trigger story_engine weight recomputation after each crawl cycle.
+                # Uses asyncio subprocess so the worker loop is not blocked.
+                # Errors are logged but never crash the worker.
+                if not DRY_RUN:
+                    try:
+                        logger.info("Triggering compute_weights.py after crawl cycle...")
+                        proc = await asyncio.create_subprocess_exec(
+                            sys.executable,
+                            '/home/tnnd/data/code/story_engine/compute_weights.py',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        try:
+                            stdout, stderr = await asyncio.wait_for(
+                                proc.communicate(), timeout=300
+                            )
+                            if proc.returncode == 0:
+                                logger.info("compute_weights.py completed successfully")
+                            else:
+                                logger.warning(
+                                    f"compute_weights.py exited {proc.returncode}: "
+                                    f"{stderr.decode(errors='replace').strip()}"
+                                )
+                        except asyncio.TimeoutError:
+                            proc.kill()
+                            logger.error("compute_weights.py timed out after 300s — killed")
+                    except Exception as e:
+                        logger.error(f"Failed to run compute_weights.py: {e}", exc_info=True)
+
             else:
                 logger.debug("No due surfaces found")
 
