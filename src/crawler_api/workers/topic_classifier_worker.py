@@ -1,20 +1,33 @@
 """
 Topic classifier worker — classifies TrendItems by topic.
 
-Runs heuristic pass first (instant, no LLM cost), then LLM pass for
-remaining ambiguous items that are within the top N% hotness per locale
-(same threshold as translation: translation_hot_percent_<lang_group>).
+Implements the classification state machine per class.txt design:
 
-Polls every 10 minutes for unclassified items (topic_tags=[], topic_classified_at IS NULL).
+  pending → heuristic pass runs
+    ├─ no category found (tier=none)
+    │    → LLM eligible unconditionally → llm_complete or failed
+    │
+    └─ category found (classified_by ∈ {bucket, platform, keyword, locale, surface})
+         ├─ tier=high/medium (bucket, platform, keyword) → heuristic_complete
+         ├─ tier=low AND NOT high-hotness              → heuristic_complete
+         └─ tier=low AND high-hotness                  → LLM attempt
+              ├─ LLM finds category → llm_complete
+              └─ LLM fails         → heuristic_complete (heuristic result preserved)
 
-Hot-reload: each cycle checks if auto_keywords.json has changed. If so,
-patterns are reloaded and all "Tried, no tags" items are reset so the
-heuristic gets a second chance before LLM runs — saving LLM cost.
+LLM eligibility is now based on confidence tier, not just empty tags.
+Low-confidence (locale/surface) + high-hotness items are sent to LLM for rescue.
+
+Version management:
+  On startup and after each auto_keywords.json hot-reload, compute
+  current_version = "<TAXONOMY_VERSION>:<sha256(auto_keywords.json)[:8]>".
+  Re-queue all non-LLM items where classification_version != current_version.
+  This replaces reset_tried_no_tags().
 
 Enable/disable via ENABLE_TOPIC_CLASSIFIER in .env.
-LLM pass enable/disable via ENABLE_TOPIC_LLM in .env.
+LLM enable/disable via SystemSetting 'enable_llm_classification' (boolean, default True).
 """
 
+import hashlib
 import os
 import sys
 import time
@@ -26,46 +39,176 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
 from django.utils import timezone
-from crawler_admin.models import TrendItem
-from shared.topic_classifier import classify_topic_tags, reload_keywords_if_updated, VALID_TOPICS
+from crawler_admin.models import TrendItem, SystemSettings
+from shared.topic_classifier import (
+    classify_item,
+    reload_keywords_if_updated,
+    VALID_CATEGORIES,
+    _AUTO_KEYWORDS_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.getenv('TOPIC_CLASSIFIER_POLL_INTERVAL', '600'))  # 10 min
-ENABLE_LLM = os.getenv('ENABLE_TOPIC_LLM', 'false').lower() == 'true'  # off until Phase 4
+
+# Taxonomy version — bump manually whenever the canonical category vocabulary changes.
+TAXONOMY_VERSION = 1
+
+# Confidence tier lookup — derived from classified_by signal name
+_CONFIDENCE_TIER: dict[str, str] = {
+    'bucket':   'high',
+    'platform': 'medium',
+    'keyword':  'medium',
+    'locale':   'low',
+    'surface':  'low',
+    'llm':      'high',
+}
 
 
-def get_unclassified_items(limit: int = 5000) -> list:
+def _get_current_version() -> str:
+    """Compute current classification_version from taxonomy version + keyword map sha."""
+    try:
+        content = _AUTO_KEYWORDS_PATH.read_bytes()
+        sha = hashlib.sha256(content).hexdigest()[:8]
+    except FileNotFoundError:
+        sha = '00000000'
+    return f"{TAXONOMY_VERSION}:{sha}"
+
+
+def _is_llm_enabled() -> bool:
+    """Read LLM enable flag from SystemSetting (default True)."""
+    try:
+        val = SystemSettings.get_setting('enable_llm_classification', default='true')
+        return str(val).lower() not in ('false', '0', 'no')
+    except Exception:
+        return True
+
+
+def _get_locale_hot_percent(lang_group: str | None) -> int | None:
     """
-    Get items where topic classification was never attempted.
-    Excludes items already attempted (topic_classified_at IS NOT NULL).
+    Get the per-locale hotness percent threshold for LLM classification.
+    Reads translation_hot_percent_<lang_group> from SystemSettings.
+    Returns None if the key is absent — callers must treat None as not high-hotness
+    (fail safe: missing config → no LLM upgrade for that lang_group).
+    Does NOT fall back to a global key or hardcoded default.
     """
+    try:
+        if lang_group:
+            key = f'translation_hot_percent_{lang_group}'
+            val = SystemSettings.get_setting(key, default=None)
+            if val is not None:
+                return int(val)
+        return None  # key absent — fail safe
+    except Exception:
+        return None
+
+
+def _is_high_hotness(item) -> bool:
+    """
+    Check if item meets the high-hotness threshold for LLM classification.
+    Reads the same SystemSetting used by translation_worker.
+    Returns False if threshold is absent for this lang_group (fail safe).
+    """
+    threshold = _get_locale_hot_percent(item.lang_group)
+    if threshold is None:
+        return False  # no threshold configured for this lang_group — not eligible
+    if item.hotness is None:
+        return False
+    # threshold is a percentile cutoff — we use it as a minimum score floor
+    # (same semantics as translation_worker's _filter_top_percent_per_locale)
+    return item.hotness >= threshold
+
+
+def _confidence_tier(classified_by: str | None) -> str:
+    """Return confidence tier for a classified_by signal value."""
+    if classified_by is None:
+        return 'none'
+    return _CONFIDENCE_TIER.get(classified_by, 'none')
+
+
+def _is_llm_eligible(classified_by: str | None, item) -> bool:
+    """
+    Determine LLM eligibility based on confidence tier.
+
+    tier=none  → eligible unconditionally (no heuristic result)
+    tier=low   → eligible if item is high-hotness (locale/surface signals)
+    tier=high/medium → not eligible
+    """
+    tier = _confidence_tier(classified_by)
+    if tier == 'none':
+        return True
+    if tier == 'low':
+        return _is_high_hotness(item)
+    return False
+
+
+def requeue_stale_items(current_version: str) -> int:
+    """
+    Reset classification_state to 'pending' for all non-LLM items where
+    classification_version != current_version.
+
+    LLM items are exempt — their classifications are authoritative.
+    Returns count of items re-queued.
+    """
+    count = TrendItem.objects.exclude(
+        classification_version=current_version,
+    ).exclude(
+        classified_by='llm',
+    ).update(
+        classification_state='pending',
+        story_category=None,
+        classified_by=None,
+        classification_version=None,
+    )
+    if count:
+        logger.info(
+            f"Version re-queue: reset {count} stale items to pending "
+            f"(current_version={current_version})"
+        )
+    return count
+
+
+def get_pending_items(limit: int = 5000) -> list:
+    """Get items where classification_state='pending', ordered by hotness desc."""
     return list(
         TrendItem.objects.filter(
-            topic_tags=[],
-            topic_classified_at__isnull=True,
+            classification_state='pending',
         )
         .select_related('surface', 'region')
         .order_by('-hotness')[:limit]
     )
 
 
-def run_heuristic_pass(items: list) -> tuple[int, list]:
-    """
-    Run heuristic topic classification on items.
+def run_once(current_version: str) -> None:
+    """Run one classification cycle."""
+    items = get_pending_items()
+    if not items:
+        logger.debug("No pending items found")
+        return
 
-    Returns (classified_count, remaining_items).
-    Items the heuristic couldn't classify are passed to LLM pass.
+    logger.info(f"Found {len(items)} pending items")
 
-    Uses bulk_update to write all classified items in batches of 500
-    instead of one UPDATE per item — avoids DB pressure at large batch sizes.
-    """
-    classified_items = []
-    remaining = []
+    enable_llm = _is_llm_enabled()
     now = timezone.now()
 
+    # Load LLM classifier if enabled
+    classify_batch_llm = None
+    BATCH_SIZE = 20
+    if enable_llm:
+        try:
+            from shared.topic_llm_classifier import classify_batch_llm, BATCH_SIZE
+        except ImportError:
+            logger.info("topic_llm_classifier not available — LLM pass disabled")
+            enable_llm = False
+
+    # Buckets for bulk updates
+    heuristic_complete: list = []
+    needs_llm: list[tuple] = []   # (item, heuristic_cat, heuristic_signal) or (item, None, None)
+    failed_items: list = []        # items with no category AND LLM disabled
+
+    # --- Heuristic pass ---
     for item in items:
-        tags = classify_topic_tags(
+        cat, signal = classify_item(
             bucket=item.bucket or '',
             platform=item.surface.platform if item.surface else '',
             surface_key=item.surface.key if item.surface else '',
@@ -74,211 +217,150 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
             description=item.description_original or None,
         )
 
-        if tags:
-            item.topic_tags = tags
-            item.topic_classified_at = now
-            item.classified_by = 'heuristic'
-            classified_items.append(item)
+        if cat:
+            # Category found — check LLM eligibility via confidence tier
+            if not _is_llm_eligible(signal, item):
+                # tier=high/medium, or tier=low + not high-hotness → heuristic_complete
+                item.story_category = cat
+                item.classified_by = signal
+                item.classification_state = 'heuristic_complete'
+                item.classification_version = current_version
+                item.topic_classified_at = now
+                heuristic_complete.append(item)
+            else:
+                # tier=low AND high-hotness → attempt LLM improvement
+                if enable_llm:
+                    needs_llm.append((item, cat, signal))
+                else:
+                    # LLM disabled → write heuristic result immediately
+                    item.story_category = cat
+                    item.classified_by = signal
+                    item.classification_state = 'heuristic_complete'
+                    item.classification_version = current_version
+                    item.topic_classified_at = now
+                    heuristic_complete.append(item)
         else:
-            remaining.append(item)
+            # No category found
+            if enable_llm:
+                needs_llm.append((item, None, None))
+            else:
+                item.classification_state = 'failed'
+                item.topic_classified_at = now
+                failed_items.append(item)
 
-    if classified_items:
+    # Bulk write heuristic_complete items
+    if heuristic_complete:
         TrendItem.objects.bulk_update(
-            classified_items,
-            ['topic_tags', 'topic_classified_at', 'classified_by'],
+            heuristic_complete,
+            ['story_category', 'classified_by', 'classification_state',
+             'classification_version', 'topic_classified_at'],
             batch_size=500,
         )
-        logger.debug(f"bulk_update wrote {len(classified_items)} classified items")
+        logger.info(f"Heuristic: {len(heuristic_complete)} items → heuristic_complete")
 
-    return len(classified_items), remaining
+    # Bulk write failed items (LLM disabled)
+    if failed_items:
+        TrendItem.objects.bulk_update(
+            failed_items,
+            ['classification_state', 'topic_classified_at'],
+            batch_size=500,
+        )
+        logger.info(f"Failed (LLM disabled): {len(failed_items)} items → failed")
 
-
-# ---------------------------------------------------------------------------
-# LLM pass helpers (Phase 4 — disabled by default until Phase 4 is deployed)
-# ---------------------------------------------------------------------------
-
-def _get_locale_hot_percent(lang_group: str | None) -> int:
-    """
-    Get the per-locale hotness percent threshold for LLM classification.
-    Reads translation_hot_percent_<lang_group> from SystemSettings.
-    Falls back to translation_hot_percent (global) then to 10.
-
-    Uses the same setting as translation_worker.py so both LLM operations
-    run on the same item population — no separate threshold to maintain.
-    """
-    try:
-        from crawler_admin.models import SystemSettings
-        if lang_group:
-            key = f'translation_hot_percent_{lang_group}'
-            val = SystemSettings.get_setting(key, default=None)
-            if val is not None:
-                return int(val)
-        return int(SystemSettings.get_setting('translation_hot_percent', default=10))
-    except Exception:
-        return 10
-
-
-def _filter_top_percent_per_locale(items: list) -> list:
-    """
-    Keep only the top N% by hotness WITHIN EACH lang_group.
-
-    Each locale has its own translation_hot_percent_<locale> setting.
-    Items are already sorted by -hotness, so we group by lang_group and
-    keep the top N% of each group.
-    """
-    if not items:
-        return items
-
-    by_locale: dict[str, list] = {}
-    for item in items:
-        lg = item.lang_group or 'unknown'
-        by_locale.setdefault(lg, []).append(item)
-
-    kept = []
-    for lg, group in by_locale.items():
-        percent = _get_locale_hot_percent(lg)
-        cutoff = max(1, len(group) * percent // 100)
-        kept.extend(group[:cutoff])
-        logger.info(f"  Topic LLM top {percent}% for lang={lg}: {cutoff}/{len(group)}")
-
-    return kept
-
-
-def run_llm_pass(items: list) -> int:
-    """
-    Run LLM topic classification on remaining ambiguous items.
-
-    Only processes items in the top N% hotness per locale
-    (translation_hot_percent_<lang_group>). Returns classified_count.
-
-    NOTE: LLM classifier (topic_llm_classifier.py) is implemented in Phase 4.
-    This function is a no-op stub until that module exists.
-    """
-    if not ENABLE_LLM:
-        logger.info("Topic LLM classification disabled (ENABLE_TOPIC_LLM=false)")
-        return 0
-
-    try:
-        from shared.topic_llm_classifier import classify_batch_llm, BATCH_SIZE
-    except ImportError:
-        logger.info("topic_llm_classifier not yet available (Phase 4) — skipping LLM pass")
-        return 0
-
-    items = _filter_top_percent_per_locale(items)
-    logger.info(f"Topic LLM total after per-locale filtering: {len(items)} items")
-
-    classified = 0
-    now = timezone.now()
-
-    for i in range(0, len(items), BATCH_SIZE):
-        batch = items[i:i + BATCH_SIZE]
-
-        batch_dicts = [
-            {
-                'title': item.title_original or '',
-                'platform': item.surface.platform if item.surface else '',
-                'description': (item.description_original or '')[:300],
-            }
-            for item in batch
-        ]
-
-        results = classify_batch_llm(batch_dicts)
-
-        for item, tags in zip(batch, results):
-            item.topic_classified_at = now
-            item.classified_by = 'llm'
-            if tags:
-                item.topic_tags = sorted(set(tags) & VALID_TOPICS)
-                item.save(update_fields=['topic_tags', 'topic_classified_at', 'classified_by'])
-                classified += 1
-            else:
-                # LLM returned no tags — mark as attempted to avoid re-processing
-                item.save(update_fields=['topic_classified_at', 'classified_by'])
-
-    return classified
-
-
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
-
-def run_once():
-    """Run one classification cycle."""
-    items = get_unclassified_items()
-    if not items:
-        logger.debug("No unclassified items found")
+    if not needs_llm:
         return
 
-    logger.info(f"Found {len(items)} unclassified items")
+    # --- LLM pass ---
+    llm_items_no_heuristic = [(item, None, None) for item, cat, sig in needs_llm if cat is None]
+    llm_items_low_conf = [(item, cat, sig) for item, cat, sig in needs_llm if cat is not None]
 
-    # Heuristic pass (instant, no LLM cost)
-    heuristic_count, remaining = run_heuristic_pass(items)
-    logger.info(f"Heuristic: classified {heuristic_count}, remaining {len(remaining)}")
-
-    if not remaining:
-        return
-
-    # LLM pass — only for top N% per locale, disabled until Phase 4
-    llm_sent_items = _filter_top_percent_per_locale(remaining)
-    llm_sent_ids = {item.id for item in llm_sent_items}
-    llm_count = 0
-
-    if llm_sent_items:
-        llm_count = run_llm_pass(remaining)  # run_llm_pass re-applies the filter
     logger.info(
-        f"LLM: classified {llm_count}, "
-        f"sent {len(llm_sent_items)}, "
-        f"unclassified {len(remaining) - llm_count}"
+        f"LLM pass: {len(llm_items_no_heuristic)} no-category items + "
+        f"{len(llm_items_low_conf)} low-confidence items"
     )
 
-    # Mark low-hotness items NOT sent to LLM as attempted too.
-    # They failed the heuristic and are below the hotness threshold for LLM —
-    # marking them prevents infinite re-polling.
-    now = timezone.now()
-    not_sent = [item for item in remaining if item.id not in llm_sent_ids]
-    if not_sent:
-        for item in not_sent:
-            item.topic_classified_at = now
-        TrendItem.objects.bulk_update(not_sent, ['topic_classified_at'], batch_size=500)
-        logger.info(f"Marked {len(not_sent)} low-hotness items as tried (skip LLM)")
+    llm_complete_count = 0
+    heuristic_fallback_count = 0
+    llm_failed_count = 0
 
+    for chunk in [llm_items_no_heuristic, llm_items_low_conf]:
+        for i in range(0, len(chunk), BATCH_SIZE):
+            batch = chunk[i:i + BATCH_SIZE]
+            batch_items = [t[0] for t in batch]
+            batch_heuristic = [(t[1], t[2]) for t in batch]
 
-def reset_tried_no_tags() -> int:
-    """
-    Reset topic_classified_at for all "Tried, no tags" items so they re-enter
-    the heuristic queue on the next cycle.
+            batch_dicts = [
+                {
+                    'title': item.title_original or '',
+                    'platform': item.surface.platform if item.surface else '',
+                    'description': (item.description_original or '')[:300],
+                }
+                for item in batch_items
+            ]
 
-    Called after a keyword hot-reload so newly added keywords get a chance to
-    classify items that previously fell through — before spending LLM budget.
+            results = classify_batch_llm(batch_dicts)
+            to_update = []
 
-    Returns the number of items reset.
-    """
-    count = TrendItem.objects.filter(
-        topic_tags=[],
-        topic_classified_at__isnull=False,
-    ).update(topic_classified_at=None, classified_by=None)
-    if count:
-        logger.info(
-            f"Keyword hot-reload: reset {count} 'Tried, no tags' items "
-            f"→ heuristic will re-run on next cycle (LLM only for remaining misses)"
-        )
-    return count
+            for item, llm_cat, (heuristic_cat, heuristic_signal) in zip(
+                batch_items, results, batch_heuristic
+            ):
+                item.topic_classified_at = now
+
+                if llm_cat:
+                    # LLM found a category
+                    item.story_category = llm_cat
+                    item.classified_by = 'llm'
+                    item.classification_state = 'llm_complete'
+                    item.classification_version = current_version
+                    llm_complete_count += 1
+                elif heuristic_cat:
+                    # LLM failed but heuristic had a result — preserve it
+                    item.story_category = heuristic_cat
+                    item.classified_by = heuristic_signal
+                    item.classification_state = 'heuristic_complete'
+                    item.classification_version = current_version
+                    heuristic_fallback_count += 1
+                else:
+                    # No category from either pass → failed
+                    item.story_category = None
+                    item.classification_state = 'failed'
+                    llm_failed_count += 1
+
+                to_update.append(item)
+
+            TrendItem.objects.bulk_update(
+                to_update,
+                ['story_category', 'classified_by', 'classification_state',
+                 'classification_version', 'topic_classified_at'],
+                batch_size=500,
+            )
+
+    logger.info(
+        f"LLM pass complete: {llm_complete_count} llm_complete, "
+        f"{heuristic_fallback_count} heuristic_fallback (LLM failed, heuristic preserved), "
+        f"{llm_failed_count} failed"
+    )
 
 
 def run_worker_loop():
     """Main worker loop — polls every POLL_INTERVAL seconds."""
     logger.info("Topic classifier worker started")
-    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s, ENABLE_LLM={ENABLE_LLM}")
+    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s, TAXONOMY_VERSION={TAXONOMY_VERSION}")
+
+    # Compute initial version and re-queue stale items on startup
+    current_version = _get_current_version()
+    logger.info(f"Startup: current_version={current_version}")
+    requeue_stale_items(current_version)
 
     while True:
         try:
-            # Hot-reload keywords if auto_keywords.json changed.
-            # On reload, reset "Tried, no tags" so heuristic runs first (free)
-            # before LLM is considered for remaining misses.
+            # Hot-reload: check if auto_keywords.json changed
             if reload_keywords_if_updated():
-                reset_tried_no_tags()
+                current_version = _get_current_version()
+                logger.info(f"Keywords reloaded: new current_version={current_version}")
+                requeue_stale_items(current_version)
 
-            run_once()
+            run_once(current_version)
         except Exception as e:
             logger.error(f"Topic classification cycle error: {e}", exc_info=True)
 

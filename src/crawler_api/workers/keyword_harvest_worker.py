@@ -57,9 +57,10 @@ logging.basicConfig(
 
 AUTO_KEYWORDS_PATH = Path(__file__).parent.parent.parent.parent / 'config' / 'auto_keywords.json'
 
+# Canonical 9-value story_category vocabulary
 VALID_TOPICS = frozenset({
-    'politics', 'finance', 'ai', 'tech', 'science', 'entertainment',
-    'sports', 'business', 'crime', 'society', 'health', 'environment',
+    'world', 'politics', 'business', 'technology', 'ai',
+    'science', 'society', 'sports', 'entertainment',
 })
 
 CLAUDE_TIMEOUT = 90
@@ -111,9 +112,8 @@ def get_llm_classified_items(cutoff_start, cutoff_end) -> list:
             collected_at__lte=cutoff_end,
             classified_by='llm',
         )
-        .exclude(topic_tags=[])
-        .select_related('surface')
-        .only('id', 'title_original', 'canonical_title', 'topic_tags', 'lang_group')
+        .exclude(story_category__isnull=True)
+        .only('id', 'title_original', 'canonical_title', 'story_category', 'lang_group')
     )
     result = list(items)
     logger.info(
@@ -170,11 +170,10 @@ def extract_chinese_entities(title: str) -> list[str]:
 
 def extract_entities_from_items(items: list) -> dict[str, dict[str, dict[str, int]]]:
     """
-    For each item, extract entities from title and count per (entity, topic).
+    For each item, extract entities from title and count per (entity, story_category).
 
-    Returns: {entity: {topic: count}}
-    Multi-label items (e.g. topic_tags=["politics","tech"]) count the entity
-    once under EACH label it appears in.
+    Returns: {entity: {story_category: count}}
+    Uses story_category (single value) instead of topic_tags (multi-label).
     """
     entity_topic_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -183,17 +182,18 @@ def extract_entities_from_items(items: list) -> dict[str, dict[str, dict[str, in
         if not title:
             continue
 
+        category = getattr(item, 'story_category', None)
+        if not category or category not in VALID_TOPICS:
+            continue
+
         lang = item.lang_group or 'en'
         if lang == 'zh':
             entities = extract_chinese_entities(title)
         else:
             entities = extract_english_entities(title)
 
-        topic_tags = item.topic_tags or []
         for entity in entities:
-            for topic in topic_tags:
-                if topic in VALID_TOPICS:
-                    entity_topic_counts[entity][topic] += 1
+            entity_topic_counts[entity][category] += 1
 
     logger.info(f"Step 2: extracted {len(entity_topic_counts)} unique entities")
     return dict(entity_topic_counts)
@@ -290,7 +290,7 @@ def llm_confirm_candidates(candidates: list[dict]) -> list[dict]:
 
     prompt = f"""The following terms appear frequently in news articles that were classified by topic.
 For each term, confirm the best topic label from this fixed set:
-politics, finance, ai, tech, science, entertainment, sports, business, crime, society, health, environment
+world, politics, business, technology, ai, science, society, sports, entertainment
 
 Terms (with the topic they appeared under most often):
 {term_lines}

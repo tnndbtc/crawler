@@ -2,32 +2,36 @@
 Topic LLM classifier — Phase 4.
 
 Classifies TrendItems by topic using Claude CLI when the heuristic pass
-(topic_classifier.py) returns no tags.
+(topic_classifier.py) returns no category, or for low-confidence heuristic
+results on high-hotness items.
 
 Interface required by topic_classifier_worker.py:
-    classify_batch_llm(items: list[dict]) -> list[list[str]]
+    classify_batch_llm(items: list[dict]) -> list[str | None]
     BATCH_SIZE: int
 
 items dicts have keys: 'title', 'platform', 'description' (max 300 chars).
 
-Returns a list of tag lists, one per input item. Each tag list contains
-zero or more labels from VALID_TOPICS. Empty list means "unclassifiable"
-(worker marks topic_classified_at without setting tags).
+Returns a list of story_category strings (or None), one per input item.
+None means "unclassifiable" — worker marks item as failed or preserves
+heuristic result.
 """
 
 import json
 import logging
 import subprocess
 
-from shared.topic_classifier import VALID_TOPICS
+from shared.topic_classifier import VALID_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 20
 CLAUDE_TIMEOUT = 90
 
+# Ordered list for display in prompt
+_VALID_LABELS = sorted(VALID_CATEGORIES)
 
-def classify_batch_llm(items: list[dict]) -> list[list[str]]:
+
+def classify_batch_llm(items: list[dict]) -> list[str | None]:
     """
     Classify a batch of items using Claude CLI.
 
@@ -36,17 +40,15 @@ def classify_batch_llm(items: list[dict]) -> list[list[str]]:
                Max BATCH_SIZE items — caller is responsible for batching.
 
     Returns:
-        List of tag-lists, one per item. Each tag list contains zero or more
-        validated labels from VALID_TOPICS. On total failure, returns
-        list of [] for all items (safe no-op — worker marks as attempted).
+        List of story_category strings or None, one per item.
+        None means unclassifiable. On total failure, returns list of None
+        for all items (safe no-op).
     """
     if not items:
         return []
 
     batch = items[:BATCH_SIZE]
-    empty_results: list[list[str]] = [[] for _ in batch]
-
-    valid_labels = sorted(VALID_TOPICS)
+    empty_results: list[str | None] = [None] * len(batch)
 
     # Build prompt
     item_lines = []
@@ -59,23 +61,34 @@ def classify_batch_llm(items: list[dict]) -> list[list[str]]:
             line += f" — {desc}"
         item_lines.append(line)
 
-    prompt = f"""For each news item below, assign one or more topic labels.
+    prompt = f"""For each news item below, assign exactly one topic category.
 
-Valid labels: {', '.join(valid_labels)}
+Valid categories: {', '.join(_VALID_LABELS)}
+
+Category definitions:
+- ai: machine learning, LLMs, AI models, AI policy, AI companies
+- technology: chips, software, devices, platforms, cybersecurity (non-AI tech)
+- politics: elections, government, geopolitics, war, diplomacy, legislation
+- business: finance, markets, earnings, mergers, trade, economy, companies
+- science: research, environment, climate, space, medicine, biology
+- society: health, crime, social issues, culture, education, human rights
+- sports: sports events, leagues, athletes, tournaments
+- entertainment: movies, music, gaming, celebrity, streaming
+- world: international news that doesn't fit another category
 
 Rules:
-- Choose only labels from the list above.
-- Use multiple labels when genuinely applicable (e.g. an AI chip tariff story: ["ai", "finance", "politics"]).
-- Return [] if none apply (e.g. purely local gossip or unclear content).
-- Do NOT return labels not in the list.
+- Choose exactly ONE category per item from the list above.
+- Return null if none apply (purely local or completely unclear content).
+- Do NOT invent categories outside the list.
 
 Items:
 {chr(10).join(item_lines)}
 
-Return ONLY a JSON array of {len(batch)} entries. Each entry is a list of label strings.
-Example for 4 items: [["tech", "ai"], ["politics"], [], ["finance"]]
+Return ONLY a JSON array of {len(batch)} entries.
+Each entry is a category string or null.
+Example for 4 items: ["technology", "politics", null, "business"]
 
-CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
+CRITICAL: Return exactly {len(batch)} entries."""
 
     try:
         result = subprocess.run(
@@ -127,16 +140,15 @@ CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
         )
         return empty_results
 
-    # Validate structure and filter to valid labels
-    results: list[list[str]] = []
+    # Validate each entry: must be a valid category string or None/null
+    results: list[str | None] = []
     for entry in entries:
-        if not isinstance(entry, list):
-            results.append([])
-            continue
-        valid = sorted({
-            tag for tag in entry
-            if isinstance(tag, str) and tag in VALID_TOPICS
-        })
-        results.append(valid)
+        if entry is None:
+            results.append(None)
+        elif isinstance(entry, str) and entry in VALID_CATEGORIES:
+            results.append(entry)
+        else:
+            logger.debug(f"Topic LLM: invalid entry '{entry}' — treating as None")
+            results.append(None)
 
     return results

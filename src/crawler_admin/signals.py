@@ -86,11 +86,14 @@ def connect_signals():
     from django.db.models.signals import pre_migrate
 
     def on_pre_migrate(sender, app_config, verbosity, interactive, using, **kwargs):
+        import sys
+        if 'flush' not in sys.argv:
+            return
         stack = ''.join(traceback.format_stack())
         logger.warning(
             f"\n"
             f"{'='*60}\n"
-            f"⚠️  MIGRATION/FLUSH DETECTED\n"
+            f"⚠️  FLUSH DETECTED\n"
             f"  App      : {app_config.name}\n"
             f"  DB alias : {using}\n"
             f"Stack trace:\n{stack}"
