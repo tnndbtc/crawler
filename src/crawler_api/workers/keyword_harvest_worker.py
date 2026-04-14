@@ -79,6 +79,160 @@ STOPWORDS_EN = {
     'More', 'Most', 'Some', 'All', 'One', 'Two', 'First', 'Last', 'Next',
 }
 
+# ---------------------------------------------------------------------------
+# Noise-keyword filter (2026-04-14)
+# ---------------------------------------------------------------------------
+#
+# Post-extraction junk filter applied to candidate terms before they reach
+# the LLM confirmation step or get persisted to auto_keywords.json.
+#
+# Purpose: kill low-signal / noise terms like "BOTH", "II", "CL", "HE" that
+# leak out of the regex-based entity extractors. These terms pollute the
+# heuristic classifier (Signal 3) and degrade downstream story_engine
+# output. Filtering here ALSO saves LLM confirmation cost: junk terms get
+# dropped before `llm_confirm_candidates` spends quota asking Claude what
+# topic "BOTH" belongs to.
+#
+# This is intentionally a pure-Python deterministic filter — no NLP model,
+# no LLM, no external dependencies. Rules are independent and cheap.
+
+# Case-insensitive reject set: grammatical stopwords (rule 2) merged with
+# low-signal generic news words (rule 5). Stored lowercase; the predicate
+# lowercases before lookup. This set is separate from STOPWORDS_EN above
+# because STOPWORDS_EN is Title-Case and used by the entity extractor to
+# skip title-cased function words mid-stream — a different job.
+#
+# Expanded 2026-04-14 after dry-run against real auto_keywords.json showed
+# function words like "INTO" leaking through the all-caps regex extractor
+# into persisted keywords. The list below covers common English function
+# words ≥3 chars (shorter ones are already killed by rule 1). Terms only
+# match when the ENTIRE normalized keyword equals one of these — so
+# phrases like "New Mexico" or "Into the Wild" still pass because their
+# full form isn't in the set.
+_KEYWORD_FILTER_STOPWORDS: frozenset[str] = frozenset({
+    # --- Articles / determiners ---
+    "the", "a", "an", "this", "that", "these", "those",
+    # --- Conjunctions ---
+    "and", "or", "but", "both", "nor", "yet",
+    # --- Prepositions ---
+    "for", "from", "with", "without", "into", "onto", "upon",
+    "about", "after", "before", "over", "under", "through",
+    "during", "between", "against",
+    # --- Pronouns / possessives ---
+    "he", "she", "it", "its", "they", "them", "their",
+    "we", "us", "you", "your", "our", "his", "her",
+    # --- Auxiliaries / common verbs ---
+    "is", "are", "was", "were", "been", "being",
+    "has", "have", "had", "does", "did",
+    "will", "would", "could", "should", "can", "may", "might",
+    # --- Wh-words ---
+    "how", "why", "what", "when", "where", "who", "which", "whom",
+    # --- Quantifiers / adverbs ---
+    "all", "any", "some", "more", "most", "many", "much",
+    "also", "only", "just", "very", "too", "then", "than", "such",
+    # --- Low-value adjectives that appear as orphan title-case tokens ---
+    "new", "top", "big", "old",
+    # Rule 5 — low-signal generic news vocabulary
+    "news", "video", "update", "report", "today",
+    "breaking", "latest", "live", "watch",
+})
+
+
+def _normalize_term(term: str) -> str:
+    """Rule 7 — trim outer whitespace and collapse internal runs of
+    whitespace to a single space. Applied before any predicate check so
+    filter rules see a canonical form."""
+    return ' '.join(term.split())
+
+
+def is_valid_keyword(term: str, score: int) -> bool:
+    """
+    Return True if `term` should be admitted as a new auto-keyword.
+
+    Applied BEFORE any keyword is written into auto_keywords.json. Rules
+    are documented by number to match the filter spec; order runs
+    cheapest-first so common rejects short-circuit quickly.
+
+    Args:
+        term:  Raw candidate term from the entity extractor.
+        score: Observation count for this term in the current harvest
+               window (the `total_count` field from apply_filters).
+
+    Returns:
+        True  — term is non-noise and meets the score floor; safe to
+                pass downstream to LLM confirmation + auto_keywords.json.
+        False — term is noise (reject).
+    """
+    # Rule 7 — normalize first so length / case checks see canonical form
+    term = _normalize_term(term)
+
+    # Rule 1 — minimum length (after normalization). Context-aware:
+    # ASCII terms need >=3 chars (kills English 2-char noise like "II",
+    # "CL", "HE"), but non-ASCII terms only need >=2 chars because CJK
+    # (Chinese/Japanese/Korean) is semantically denser per character —
+    # legitimate 2-character words like "醫療" (healthcare), "警方"
+    # (police), "经济" (economy) would be lost with a universal >=3.
+    min_len = 3 if term.isascii() else 2
+    if len(term) < min_len:
+        return False
+
+    # Rule 6 — score threshold. Requires repeated observation; one-off
+    # spurious extractions get dropped even if everything else passes.
+    if score < 2:
+        return False
+
+    # Rules 2 + 5 — stopword / low-signal word (case-insensitive)
+    if term.lower() in _KEYWORD_FILTER_STOPWORDS:
+        return False
+
+    # Rule 3 — all-caps short tokens like "II", "CL", "TP", "HE" —
+    # almost always noise. `isalpha()` guard is important: Python's
+    # `str.isupper()` ignores non-cased characters, so without the
+    # alpha check "U.S." would match isupper()==True and get wrongly
+    # rejected here. Requiring isalpha() restricts rule 3 to pure
+    # alphabetic all-caps tokens and lets "U.S." fall through to the
+    # alnum-ratio and capitalization checks below, which it passes.
+    #
+    # Threshold tuned from <=4 to <=2 on 2026-04-14 after dry-run
+    # analysis against real auto_keywords.json showed the <=4 bound
+    # was wrongly rejecting many legitimate 3-4 char acronyms — BJP,
+    # CDU, NDP, PKK, RFK, STF, HIV, PSG, WSJ, TMZ, TDK, OLED, GTX,
+    # BLIK, NASA, OPEC and more. Dropping to <=2 still catches every
+    # example in the original spec ("II", "CL", "TP", "HE" are all
+    # 2 chars) while preserving real proper-noun acronyms. At <=2
+    # this rule is effectively redundant with rule 1 for ASCII input
+    # (any 2-char ASCII term is already killed by len<3), but keeping
+    # it is harmless defense-in-depth and documents the intent.
+    if term.isalpha() and term.isupper() and len(term) <= 2:
+        return False
+
+    # Rule 4 — non-alphanumeric / punctuation noise. Require at least
+    # half of the characters to be letters or digits. Passes "U.S."
+    # (2 alnum / 4 total = 0.50), rejects "..." (0/3) and "///" (0/3).
+    alnum = sum(1 for c in term if c.isalnum())
+    if alnum / len(term) < 0.5:
+        return False
+
+    # Rule 8 (soft / optional) — require at least one capitalized word.
+    # This is the simplest interpretation of "prefer Title Case" that
+    # avoids false rejects on mixed-case names: "iPhone" fails here but
+    # "Nancy Pelosi", "OpenAI", "GameStop", "Tiger Woods", "New York"
+    # all pass. Generic lowercase words like "something", "breaking",
+    # "update" get dropped. Single-letter splits are skipped to avoid
+    # IndexError on degenerate input.
+    #
+    # ASCII guard: rule 8 only applies to pure-ASCII terms. CJK
+    # characters (Chinese/Japanese/Korean) have no case concept, so
+    # `w[0].isupper()` always returns False for them — without this
+    # guard rule 8 would reject every Chinese keyword unconditionally
+    # even though the extractor produces legitimate terms like '醫療'
+    # or '警方'. Non-ASCII terms are judged by rules 1-7 only.
+    if term.isascii() and not any(w and w[0].isupper() for w in term.split()):
+        return False
+
+    return True
+
+
 # Regex patterns for English entity extraction
 _RE_ALLCAPS = re.compile(r'\b[A-Z]{2,6}\b')
 _RE_TITLECASE = re.compile(r'\b(?:[A-Z][a-z]+\s){1,3}[A-Z][a-z]+\b')
@@ -240,6 +394,23 @@ def apply_filters(
         })
 
     logger.info(f"Step 3: {len(candidates)} candidates passed freq/purity filters (min_freq={min_freq})")
+
+    # 2026-04-14: noise-keyword filter. Apply is_valid_keyword() to every
+    # candidate before returning; junk terms like "BOTH", "II", "CL" get
+    # dropped here instead of wasting LLM confirmation cost downstream.
+    # See is_valid_keyword() docstring for the rule list.
+    pre_filter_count = len(candidates)
+    candidates = [
+        c for c in candidates
+        if is_valid_keyword(c['term'], c['total_count'])
+    ]
+    dropped = pre_filter_count - len(candidates)
+    if dropped:
+        logger.info(
+            f"Step 3: noise filter dropped {dropped} candidates "
+            f"({len(candidates)} remain)"
+        )
+
     return candidates
 
 

@@ -1,6 +1,589 @@
 {
-  "generated_at": "2026-04-13T03:00:09Z",
+  "generated_at": "2026-04-14T17:00:53Z",
   "keywords": {
+    "business": [
+      {
+        "term": "Billion Deal",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Farmers Trapped",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "GameStop",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Morocco Ink",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Power Packs Announcement",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Price Slump",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Starlink Rival Globalstar",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "TDK",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Tobacco Turmoil",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "USMCA",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Unlock Trade",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "WSJ",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Walmart Cupcake Bouquet",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Why Amazon Is Buying",
+        "last_seen": "2026-04-14",
+        "score": 1
+      }
+    ],
+    "entertainment": [
+      {
+        "term": "American Country",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Black Cat",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Dolly Martinez",
+        "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "Filipino Horror Game",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Gods Among Us",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Inigo Montoya",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Kanye West",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "MTG",
+        "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "Michael Jackson",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Righteous Fury",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "SOUL",
+        "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "Smiling Friends",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Straw Vision",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "TIL",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "TMZ",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Tupac Shakur",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Walking Dead",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "White Person Reaction Image",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Wuthering Heights",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "丁文琪",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "丹麥",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "兒子",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "功宴",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "司儀",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "合體",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "吸金",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "大學霸",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "天長",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "小手",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "張凌赫",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "性感",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "朱珠",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "氣場",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "热度",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "現身",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "田曦薇",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "疑準備",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "登顶",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "經紀",
+        "last_seen": "2026-04-14",
+        "score": 2
+      },
+      {
+        "term": "网播",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "蛋糕",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "蜜语",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "轉型",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "钟汉良",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "黑裙",
+        "last_seen": "2026-04-14",
+        "score": 1
+      }
+    ],
+    "politics": [
+      {
+        "term": "ADC",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "BJP",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Bihar Gets Its",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Biofertilizer Production After Laguna",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "CDU",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Charlie Kirk Act",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Chief Minister",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Cr Defamation Suit Against",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "DEPED",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "DIRECT",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Dias Toffoli",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Dino Melaye",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Erica Payne",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Fall Collien Fernandes",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Gadkari Files",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Gesundheitsministerin Nina Warken",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Gilmar Mendes",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Has Russia",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "House Dem",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Magyar",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Majority Booth",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "NDP",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Names Deleted",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Nancy Pelosi",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "New York",
+        "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "Nitish Kumar Resigns",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "PGR",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "PKK",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Pangilinan Pushes Expansion",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Patriotic Millionaires",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Plant Visit",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "RFK",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Residents Allege Irregularities",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "STF",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Samrat Choudhary New Bihar",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Sara Duterte",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Single Muslim",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Supreme Court",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "TheCable",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "UYAP",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Ujjal Bhuyan",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Wniosek Czarzastego",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "俄羅斯",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "兩國",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "午宴",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "外長",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "會晤溝",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "民進黨",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "王毅",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "立言",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "羅夫會",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "蕭旭岑",
+        "last_seen": "2026-04-14",
+        "score": 2
+      },
+      {
+        "term": "近平",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "鄭習會",
+        "last_seen": "2026-04-14",
+        "score": 1
+      }
+    ],
+    "science": [
+      {
+        "term": "HIV",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Millionen Tonnen",
+        "last_seen": "2026-04-14",
+        "score": 1
+      }
+    ],
     "society": [
       {
         "term": "AITJ",
@@ -8,13 +591,48 @@
         "score": 1
       },
       {
-        "term": "CL",
-        "last_seen": "2026-04-13",
+        "term": "Amine Oualane",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Gabriel Ory",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Give Up",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "HCM",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "How Nigerians",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Jahre Haft",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Le Parisien",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
         "term": "New Mexico",
         "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "Rancho Cucamonga",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
@@ -28,8 +646,33 @@
         "score": 1
       },
       {
+        "term": "YALE",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
         "term": "十课",
         "last_seen": "2026-04-13",
+        "score": 1
+      },
+      {
+        "term": "單位",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "宏福",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "家屬",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "弟泡",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
@@ -48,47 +691,73 @@
         "score": 1
       },
       {
+        "term": "業界",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "氣體",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "河水",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "法師",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "爸媽",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "現金",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
         "term": "秘诀",
         "last_seen": "2026-04-13",
         "score": 1
-      }
-    ],
-    "entertainment": [
+      },
       {
-        "term": "Dolly Martinez",
-        "last_seen": "2026-04-13",
+        "term": "竹架",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
-        "term": "HE",
-        "last_seen": "2026-04-13",
+        "term": "苑疑",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
-        "term": "INTO",
-        "last_seen": "2026-04-13",
+        "term": "警方",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
-        "term": "MTG",
-        "last_seen": "2026-04-13",
+        "term": "財物",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
-        "term": "MY",
-        "last_seen": "2026-04-13",
+        "term": "醫療",
+        "last_seen": "2026-04-14",
         "score": 1
       },
       {
-        "term": "SOUL",
-        "last_seen": "2026-04-13",
+        "term": "領牌",
+        "last_seen": "2026-04-14",
         "score": 1
-      }
-    ],
-    "politics": [
+      },
       {
-        "term": "New York",
-        "last_seen": "2026-04-13",
+        "term": "首飾",
+        "last_seen": "2026-04-14",
         "score": 1
       }
     ],
@@ -99,8 +768,60 @@
         "score": 1
       },
       {
+        "term": "Memphis Grizzlies",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "PSG",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Pierre Escalettes",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
         "term": "Tiger Woods",
         "last_seen": "2026-04-13",
+        "score": 1
+      }
+    ],
+    "technology": [
+      {
+        "term": "BLIK",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "GTX",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "IONNA",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "OLED",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "Well Twitter",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "資訊",
+        "last_seen": "2026-04-14",
+        "score": 1
+      },
+      {
+        "term": "電車",
+        "last_seen": "2026-04-14",
         "score": 1
       }
     ]
