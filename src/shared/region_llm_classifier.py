@@ -63,9 +63,32 @@ Example: [["cn", "us"], ["none"], ["jp"], ["de", "fr"], ...]
 CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
 
     # Call Claude
+    # 2026-04-14: strip Claude Code harness overhead on every subprocess.
+    # Each `claude -p` call was loading the full default system prompt,
+    # all skill manifests, the deferred tool catalogue, user CLAUDE.md,
+    # hooks, and per-machine env sections — ~15-25 KB of input tokens per
+    # call that this classifier never uses. The flags below reduce each
+    # call to just the model + our prompt:
+    #   --system-prompt           replaces multi-KB default with one-liner
+    #   --disable-slash-commands  skips loading every skill manifest
+    #   --tools ""                drops all tool schemas (pure text in/out)
+    #   --setting-sources user    skips project CLAUDE.md walk
+    #   --no-session-persistence  no session file writes for one-shot
+    # Same pattern as topic_llm_classifier.py (commit 7163c925).
     try:
         result = subprocess.run(
-            ['claude', '-p', '--model', 'sonnet'],
+            [
+                'claude', '-p',
+                '--model', 'sonnet',
+                '--system-prompt',
+                'You are a region classifier. Output ONLY a JSON array of '
+                'region-code lists. No prose, no markdown, no explanation.',
+                '--disable-slash-commands',
+                '--tools', '',
+                '--setting-sources', 'user',
+                '--no-session-persistence',
+                '--output-format', 'text',
+            ],
             input=prompt,
             capture_output=True,
             text=True,

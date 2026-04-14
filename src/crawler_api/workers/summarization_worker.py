@@ -279,10 +279,29 @@ async def _run_claude(prompt: str, timeout: int = CLAUDE_TIMEOUT_SINGLE) -> str:
 
     Use timeout=CLAUDE_TIMEOUT_BATCH for multi-item batch calls.
     """
+    # 2026-04-14: strip Claude Code harness overhead on every subprocess.
+    # See topic_llm_classifier.py (commit 7163c925) for full rationale —
+    # each plain `claude -p` call was burning ~15-25 KB of input tokens on
+    # the default system prompt, skill manifests, tool catalogue, and
+    # CLAUDE.md that summarization never uses. Flags strip the harness
+    # down to just the model + our prompt. NOTE: prompt is passed as a
+    # positional arg (not stdin) in this async path, so it MUST come
+    # LAST, after all flags.
     try:
         process = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
-                'claude', '-p', '--model', 'sonnet', prompt,
+                'claude', '-p',
+                '--model', 'sonnet',
+                '--system-prompt',
+                'You summarize article descriptions. Output ONLY the '
+                'indexed [N] summary lines requested in the user message. '
+                'No preamble, no markdown, no explanation.',
+                '--disable-slash-commands',
+                '--tools', '',
+                '--setting-sources', 'user',
+                '--no-session-persistence',
+                '--output-format', 'text',
+                prompt,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             ),

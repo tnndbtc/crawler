@@ -471,9 +471,27 @@ Each entry: {{"term": "...", "confirmed_topic": "..."}}
 Do not include confidence scores or any other fields.
 Return exactly {len(candidates)} entries."""
 
+    # 2026-04-14: strip Claude Code harness overhead on every subprocess.
+    # See topic_llm_classifier.py (commit 7163c925) for full rationale —
+    # each plain `claude -p` call was burning ~15-25 KB of input tokens on
+    # the default system prompt, skill manifests, tool catalogue, and
+    # CLAUDE.md that this keyword confirmation task never uses. Flags
+    # strip the harness down to just the model + our prompt.
     try:
         result = subprocess.run(
-            ['claude', '-p', '--model', 'sonnet'],
+            [
+                'claude', '-p',
+                '--model', 'sonnet',
+                '--system-prompt',
+                'You are a topic-label confirmer. Output ONLY a JSON array '
+                'of {"term": "...", "confirmed_topic": "..."} objects. No '
+                'prose, no markdown, no explanation.',
+                '--disable-slash-commands',
+                '--tools', '',
+                '--setting-sources', 'user',
+                '--no-session-persistence',
+                '--output-format', 'text',
+            ],
             input=prompt,
             capture_output=True,
             text=True,

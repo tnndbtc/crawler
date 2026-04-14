@@ -314,10 +314,32 @@ class ClaudeEngine(BaseTranslationEngine):
         Raises appropriate exception subclasses for health tracking.
         Use timeout=CLAUDE_CLI_TIMEOUT_BATCH for multi-item batch calls.
         """
+        # 2026-04-14: strip Claude Code harness overhead on every subprocess.
+        # See topic_llm_classifier.py (commit 7163c925) for full rationale —
+        # each plain `claude -p` call was burning ~15-25 KB of input tokens
+        # on the default system prompt, skill manifests, tool catalogue, and
+        # CLAUDE.md that translation never uses. Flags strip the harness
+        # down to just the model + our prompt. Translation is the highest-
+        # volume call path in the crawler, so this is the biggest per-cycle
+        # cost reduction of the five patched files. NOTE: prompt is passed
+        # as a positional arg (not stdin), so it MUST come LAST, after all
+        # flags.
         try:
             process = await asyncio.wait_for(
                 asyncio.create_subprocess_exec(
-                    'claude', '-p', '--model', 'sonnet', prompt,
+                    'claude', '-p',
+                    '--model', 'sonnet',
+                    '--system-prompt',
+                    'You are a translation engine. Output ONLY the '
+                    'translated JSON or text exactly as the user prompt '
+                    'specifies. No explanation, no markdown fences, no '
+                    'preamble.',
+                    '--disable-slash-commands',
+                    '--tools', '',
+                    '--setting-sources', 'user',
+                    '--no-session-persistence',
+                    '--output-format', 'text',
+                    prompt,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 ),
