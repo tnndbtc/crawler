@@ -147,7 +147,9 @@ KEYWORD_MAP: dict[str, list[str]] = {
     'business': [
         'Fed ', 'Federal Reserve', 'rate hike', 'rate cut', 'inflation',
         ' GDP', 'recession', 'earnings', ' IPO', ' stock ', 'stocks',
-        ' bond', ' yield', 'crypto', 'bitcoin', ' ETF', 'hedge fund',
+        'bond yield', 'bond market', 'government bond', 'treasury bond',
+        'corporate bond', 'junk bond', ' yield', 'crypto', 'bitcoin',
+        ' ETF', 'hedge fund',
         'IMF', ' ECB', 'deficit', 'debt ceiling', 'stock market',
         'S&P', 'Nasdaq', 'Dow ', 'Wall Street', 'interest rate',
         'PBOC', "People's Bank of China", ' RMB', ' yuan', 'renminbi',
