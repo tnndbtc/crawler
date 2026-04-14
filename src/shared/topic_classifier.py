@@ -103,10 +103,16 @@ def _classify_by_platform(platform: str) -> str | None:
 KEYWORD_MAP: dict[str, list[str]] = {
     'politics': [
         'election', 'elections', 'elected', 'president', 'congress', 'senate',
-        'parliament', 'sanctions', 'treaty', 'war ', 'military', 'NATO',
-        'G7', 'G20', 'UN ', 'United Nations', 'Xi Jinping', 'Putin',
+        'parliament', 'sanctions', 'treaty', 'military', 'NATO',
+        'G7', 'G20', 'United Nations', 'Xi Jinping', 'Putin',
         'Trump', 'Biden', 'Modi', 'Macron', 'chancellor', 'prime minister',
         'tariff', 'tariffs', 'diplomat', 'diplomacy', 'geopolit',
+        # War / conflict — compound forms only. Bare ' war ' was removed
+        # because it matched German "war" (= "was") and ' UN ' was removed
+        # because it matched Spanish/French/Italian/Portuguese "un"
+        # (indefinite article) and English "sun"/"run"/"nun"/"fun" + space.
+        'war with', 'at war', 'war crime', 'war crimes',
+        'war zone', 'war veteran', 'war veterans',
         'Iran', 'Israel', 'Gaza', 'Lebanon', 'Palestine', 'Ukraine',
         'airstrike', 'airstrikes', 'ceasefire', 'cease-fire',
         'troops', 'soldiers', 'Pentagon', 'warzone', 'occupation',
@@ -139,12 +145,19 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'ビジネス', '経営', '企業',
     ],
     'ai': [
-        'LLM', ' GPT', 'Claude', 'Gemini', 'Llama', ' AI ', ' AI,', ' AI.',
+        'LLM', ' GPT', ' AI ', ' AI,', ' AI.',
         'artificial intelligence', 'machine learning', 'deep learning',
         'neural network', 'neural net', 'transformer model', 'benchmark', 'AGI',
-        'Anthropic', 'OpenAI', 'DeepMind', 'Mistral', 'xAI', 'Grok',
+        'Anthropic', 'OpenAI', 'DeepMind', 'Mistral',
         'AI Act', 'large language model', 'foundation model',
         'diffusion model', 'generative AI', 'AI model', 'AI system',
+        # Model names — compound forms only. Bare 'Claude' matched the
+        # French given name and Claude Monet; bare 'Gemini' matched the
+        # zodiac sign; bare 'Llama' matched the animal; bare 'Grok'
+        # matched the dictionary verb.
+        'Claude AI', 'Claude Sonnet', 'Claude Opus', 'Claude Haiku',
+        'Anthropic Claude', 'Gemini Pro', 'Gemini model', 'Google Gemini',
+        'Meta Llama', 'Llama 3', 'Llama model', 'Grok xAI', 'xAI Grok',
         'DeepSeek', 'Kimi ', 'Ernie Bot', 'Wenxin', 'PanGu',
         'AI regulation China', 'Chinese AI',
         'robotics', 'autonomous vehicle', 'autonomous vehicles',
@@ -155,7 +168,15 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'AI技術', '人工知能',
     ],
     'technology': [
-        'Apple', 'Google', 'Microsoft', 'Meta', 'Amazon', 'Tesla',
+        # Brand names — compound forms only. Bare 'Apple' matched
+        # "Apple pie"; bare 'Amazon' matched "Amazon rainforest"; bare
+        # 'Meta' matched "meta-analysis" of vaccines (science).
+        'Apple iPhone', 'Apple Watch', 'Apple Silicon', 'Apple AI',
+        'Amazon AWS', 'Amazon Prime', 'Amazon Alexa', 'Amazon EC2',
+        'Tesla Model', 'Tesla Autopilot', 'Tesla Cybertruck',
+        'Google Search', 'Google Cloud', 'Google DeepMind',
+        'Microsoft Azure', 'Microsoft Copilot', 'Microsoft 365',
+        'Meta Quest', 'Meta AI', 'Meta Reality Labs',
         'startup', 'software', 'hardware', ' chip', 'semiconductor',
         'iPhone', 'Android', 'open source', 'developer', 'programming',
         'cloud computing', 'cybersecurity', 'data breach', 'quantum computing',
