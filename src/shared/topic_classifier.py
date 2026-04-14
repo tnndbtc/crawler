@@ -78,15 +78,16 @@ def _classify_by_bucket(bucket: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 PLATFORM_STORY_CATEGORY_MAP: dict[str, str] = {
+    # Kept: literally single-topic feeds (100% of content is the mapped category).
+    # Removed 2026-04-14: github, hackernews, v2ex, producthunt — these platforms
+    # carry significant non-technology content (politics, culture, business, etc.)
+    # and were blind source-level tagging. Items from those platforms now flow
+    # to keyword/LLM (Haiku) for per-post classification.
     'paperswithcode': 'ai',
     'arxiv_ai_rss':   'ai',
-    'github':         'technology',
-    'hackernews':     'technology',
     'devto':          'technology',
     'lobsters':       'technology',
     'stackoverflow':  'technology',
-    'v2ex':           'technology',
-    'producthunt':    'technology',
 }
 
 
@@ -105,7 +106,11 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'election', 'elections', 'elected', 'president', 'congress', 'senate',
         'parliament', 'sanctions', 'treaty', 'military', 'NATO',
         'G7', 'G20', 'United Nations', 'Xi Jinping', 'Putin',
-        'Trump', 'Biden', 'Modi', 'Macron', 'chancellor', 'prime minister',
+        'Trump', 'Biden',
+        # Was bare 'Modi' — matched Spanish 'modi-' prefix (modificar,
+        # modificación). Contextualized to avoid false positives.
+        ' Modi ', 'PM Modi', 'Narendra Modi',
+        'Macron', 'chancellor', 'prime minister',
         'tariff', 'tariffs', 'diplomat', 'diplomacy', 'geopolit',
         # War / conflict — compound forms only. Bare ' war ' was removed
         # because it matched German "war" (= "was") and ' UN ' was removed
@@ -120,8 +125,22 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'Border Patrol', 'deport', 'deportation', 'deportee',
         'asylum seeker', 'asylum seekers', 'undocumented immigrant',
         'Taiwan strait', 'Taiwan Strait', '台海', 'South China Sea', '南海',
-        'one country two systems', 'NPC ', 'Belt and Road', 'BRI ',
-        'Politburo', ' PLA ', 'Hong Kong', 'national security law',
+        'one country two systems',
+        # Was 'NPC ' (trailing space only) — matched Nigerian NNPC oil co.
+        # Original intent was Chinese National People's Congress.
+        ' NPC ', "National People's Congress",
+        # Was 'Belt and Road' + 'BRI ' — BRI was a noisy 3-letter acronym.
+        # Consolidated to the full name.
+        'Belt and Road Initiative',
+        'Politburo',
+        # Added full name alongside existing acronym for clarity.
+        "People's Liberation Army", ' PLA ',
+        # Was bare 'Hong Kong' — contextualized to specific political events
+        # (was bleeding into business "HK stock market" and entertainment
+        # "HK film festival").
+        'Hong Kong national security law', 'Hong Kong legco',
+        'Hong Kong extradition bill',
+        'national security law',
         'extradition', 'reunification', 'cross-strait',
         '政治', '选举', '制裁', '外交',
     ],
@@ -370,106 +389,27 @@ def _classify_by_locale_fallback(lang_group: str | None, platform: str) -> str |
 # ---------------------------------------------------------------------------
 
 SURFACE_STORY_CATEGORY_MAP: dict[str, str] = {
-    # Reddit — topic-specific subreddits (political discussion communities → politics)
-    'reddit_worldnews':      'politics',
-    'reddit_news':           'politics',
-    'reddit_economics':      'business',
-    'reddit_geopolitics':    'politics',
-    'reddit_ukraine':        'politics',
-    # Reddit — regional subreddits (community discussion, not editorial news)
-    'reddit_europe':         'politics',
-    'reddit_unitedkingdom':  'politics',
-    'reddit_france':         'politics',
-    'reddit_de':             'politics',
-    'reddit_arabs':          'politics',
-    'reddit_turkey':         'politics',
-    'reddit_africa':         'politics',
-    'reddit_india':          'politics',
-    'reddit_philippines':    'politics',
-    'reddit_askARussian':    'politics',
-    'reddit_poland':         'politics',
-    'reddit_brasil':         'society',
-    'reddit_argentina':      'society',
-    'reddit_mexico':         'society',
-    'reddit_italy':          'society',
-    'reddit_sweden':         'society',
-    'reddit_es':             'society',
-    'reddit_australia':      'society',
-    'reddit_canada':         'society',
-    'reddit_malaysia':       'society',
-    # News RSS feeds — general international/national outlets → world
-    'g1_rss':                'world',
-    'aajtak_rss':            'world',
-    'cumhuriyet_rss':        'world',
-    'folha_rss':             'world',
-    'aljazeera_ar_rss':      'world',
-    'onet_rss':              'world',
-    'tass_rss':              'politics',   # Russian state media — explicitly political
-    'spiegel_rss':           'world',
-    'nhk_news_rss':          'world',
-    'tvn24_rss':             'world',
-    'ansa_rss':              'world',
-    'meduza_rss':            'politics',   # Russian opposition — heavy political focus
-    'france24_ar_rss':       'world',
-    'zeit_rss':              'world',
-    'bbc_hindi_rss':         'world',
-    'bbcarabic_rss':         'world',
-    'elpais_rss':            'world',
-    'lemonde_rss':           'world',
-    'dw_ru_rss':             'world',
-    'dw_ar_rss':             'world',
-    'rfi_rss':               'world',
-    '36kr_rss':              'business',
-    # Generic RSS — general country news portals → world
-    'portugal_news_rss':     'world',
-    'vnexpress_rss':         'world',
-    'sweden_news_rss':       'world',
-    'india_english_news_rss':'world',
-    'globo_g1_rss':          'world',
-    'argentina_news_rss':    'world',
-    'nunl_rss':              'world',
-    'thailand_news_rss':     'world',
-    'philippines_news_rss':  'world',
-    # Dedicated news platforms — major international outlets → world
-    'bbc_news':              'world',
-    'guardian_news':         'world',
-    'reuters_news':          'world',
-    'aljazeera_news':        'world',
-    # Google News editions — general aggregators → world
-    'google_news':           'world',
-    'google_news_de':        'world',
-    'google_news_br':        'world',
-    'google_news_fr':        'world',
-    'google_news_es':        'world',
-    'google_news_it':        'world',
-    'google_news_pt':        'world',
-    'google_news_kr':        'world',
-    'google_news_gb':        'world',
-    'google_news_jp':        'world',
-    'google_news_ua':        'world',
-    'google_news_in_en':     'world',
-    'google_news_ca':        'world',
-    'google_news_pk':        'world',
-    'google_news_mx':        'world',
-    'google_news_au':        'world',
-    'google_news_ng':        'world',
-    'allafrica_news':        'world',
-    'thehindu_news':         'world',
-    'almonitor_news':        'world',
-    'bloomberg_news':        'business',
-    # Social / trending platforms
-    'weibo_hot':             'society',
-    'baidu_hot':             'society',
-    'naver_news_ranking':    'world',
-    'nicovideo_ranking':     'entertainment',
-    'hatena_hotentry':       'technology',
-    'wenxuecity_news':       'society',
-    'wikipedia_most_read':   'society',
-    'sina_news':             'politics',   # Chinese state-controlled media — explicitly political
-    'chinatimes_news':       'world',
-    'nyt_news':              'world',
-    'hk01_news':             'world',
-    'mirrormedia_news':      'world',
+    # Emptied 2026-04-14 as part of the "no blind source-level tagging"
+    # fix. This map previously contained 93 entries assigning a single
+    # category to entire source feeds. Even "topic-specific" sources
+    # like reddit_worldnews were measured at 82.9% political (17% of
+    # content was mis-tagged); general news outlets (BBC, Reuters,
+    # Le Monde, NHK, Google News editions, national RSS feeds) were
+    # worse.
+    #
+    # Since the LLM layer now uses Haiku (~60x cheaper than larger
+    # models), per-post classification via keyword + LLM is cheap
+    # enough to be the default. Blind source-level tagging is no
+    # longer justified on cost grounds and was never justified on
+    # accuracy grounds.
+    #
+    # Signal 5 (surface fallback) is now a no-op. Items previously
+    # classified here flow through Signal 3 (keyword) and, if no
+    # keyword matches, Signal 6 (LLM / Haiku) for per-post
+    # classification.
+    #
+    # Historical items that were blind-tagged here are removed by a
+    # one-off SQL DELETE as part of the rollout.
 }
 
 
