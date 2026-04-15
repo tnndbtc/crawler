@@ -18,14 +18,22 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
 from django.utils import timezone
-from crawler_admin.models import TrendItem
+from crawler_admin.models import SystemSettings, TrendItem
 from shared.region_classifier import classify_content_regions
 from shared.region_llm_classifier import classify_batch_llm, BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = int(os.getenv('REGION_CLASSIFIER_POLL_INTERVAL', '600'))  # 10 min
-ENABLE_LLM = os.getenv('ENABLE_REGION_LLM', 'true').lower() == 'true'
+
+
+def _is_llm_enabled() -> bool:
+    """Read LLM enable flag from SystemSetting (default True). Shared with topic classifier."""
+    try:
+        val = SystemSettings.get_setting('enable_llm_classification', default='true')
+        return str(val).lower() not in ('false', '0', 'no')
+    except Exception:
+        return True
 
 
 def get_unclassified_items(limit: int = 500) -> list:
@@ -128,8 +136,8 @@ def run_llm_pass(items: list) -> int:
     using translation_hot_percent_<locale> per-locale settings.
     Returns classified_count.
     """
-    if not ENABLE_LLM:
-        logger.info("LLM classification disabled (ENABLE_REGION_LLM=false)")
+    if not _is_llm_enabled():
+        logger.info("LLM classification disabled (enable_llm_classification=false)")
         return 0
 
     # Only classify top N% by hotness (per locale) to save LLM cost
@@ -183,12 +191,17 @@ def run_once():
         return
 
     # LLM pass for remaining items (only top N% per locale will actually be sent)
-    llm_sent_items = _filter_top_percent_per_locale(remaining)
-    llm_sent_urls = {item.id for item in llm_sent_items}
-    llm_count = 0
-    if llm_sent_items:
-        llm_count = run_llm_pass(remaining)  # run_llm_pass re-applies the filter
-    logger.info(f"LLM: classified {llm_count}, sent {len(llm_sent_items)}, unclassified {len(remaining) - llm_count}")
+    if _is_llm_enabled():
+        llm_sent_items = _filter_top_percent_per_locale(remaining)
+        llm_sent_urls = {item.id for item in llm_sent_items}
+        llm_count = 0
+        if llm_sent_items:
+            llm_count = run_llm_pass(remaining)  # run_llm_pass re-applies the filter
+        logger.info(f"LLM: classified {llm_count}, sent {len(llm_sent_items)}, unclassified {len(remaining) - llm_count}")
+    else:
+        # LLM disabled — mark every remaining item as tried so they don't re-poll
+        logger.info(f"LLM disabled — marking {len(remaining)} remaining items as tried")
+        llm_sent_urls = set()
 
     # Mark items NOT sent to LLM as tried too (they're low-hotness and won't be re-attempted
     # via LLM; heuristic already failed on them). This prevents infinite re-polling.
@@ -204,7 +217,7 @@ def run_once():
 def run_worker_loop():
     """Main worker loop."""
     logger.info("Region classifier worker started")
-    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s, ENABLE_LLM={ENABLE_LLM}")
+    logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s, enable_llm_classification={_is_llm_enabled()}")
 
     while True:
         try:
