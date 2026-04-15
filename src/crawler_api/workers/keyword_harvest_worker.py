@@ -30,15 +30,18 @@ Usage:
 import json
 import logging
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
 
-import django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+import shared.extractors  # noqa: F401 — populates EXTRACTORS dispatch table
+from shared.extractors import EXTRACTORS, DEFAULT_EXTRACTOR
+
+import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
@@ -70,15 +73,6 @@ DEFAULT_STRONG_THRESHOLD = 10   # score >= this → "strong" keyword
 DEFAULT_EXPIRE_DAYS = 30        # weak keywords: expire after N days of silence
 DEFAULT_STRONG_EXPIRE_DAYS = 90 # strong keywords: expire after N days of silence
 
-STOPWORDS_EN = {
-    'The', 'This', 'That', 'New', 'Top', 'Big', 'US', 'UK', 'EU', 'UN',
-    'A', 'An', 'In', 'On', 'At', 'Is', 'Are', 'Was', 'Were', 'Has', 'Have',
-    'Had', 'Be', 'By', 'Of', 'To', 'As', 'For', 'Or', 'But', 'And', 'Not',
-    'Its', 'It', 'He', 'She', 'They', 'We', 'You', 'How', 'Why', 'What',
-    'When', 'Where', 'Who', 'Which', 'After', 'Before', 'Over', 'Under',
-    'More', 'Most', 'Some', 'All', 'One', 'Two', 'First', 'Last', 'Next',
-}
-
 # ---------------------------------------------------------------------------
 # Noise-keyword filter (2026-04-14)
 # ---------------------------------------------------------------------------
@@ -98,9 +92,7 @@ STOPWORDS_EN = {
 
 # Case-insensitive reject set: grammatical stopwords (rule 2) merged with
 # low-signal generic news words (rule 5). Stored lowercase; the predicate
-# lowercases before lookup. This set is separate from STOPWORDS_EN above
-# because STOPWORDS_EN is Title-Case and used by the entity extractor to
-# skip title-cased function words mid-stream — a different job.
+# lowercases before lookup.
 #
 # Expanded 2026-04-14 after dry-run against real auto_keywords.json showed
 # function words like "INTO" leaking through the all-caps regex extractor
@@ -145,7 +137,7 @@ def _normalize_term(term: str) -> str:
     return ' '.join(term.split())
 
 
-def is_valid_keyword(term: str, score: int) -> bool:
+def is_valid_keyword(term: str, score: int, lang: str | None = None) -> bool:
     """
     Return True if `term` should be admitted as a new auto-keyword.
 
@@ -172,7 +164,8 @@ def is_valid_keyword(term: str, score: int) -> bool:
     # (Chinese/Japanese/Korean) is semantically denser per character —
     # legitimate 2-character words like "醫療" (healthcare), "警方"
     # (police), "经济" (economy) would be lost with a universal >=3.
-    min_len = 3 if term.isascii() else 2
+    _NO_CASE_SCRIPTS = {'ja', 'ko', 'ar', 'th', 'hi', 'zh'}
+    min_len = 3 if (term.isascii() and lang not in _NO_CASE_SCRIPTS) else 2
     if len(term) < min_len:
         return False
 
@@ -227,21 +220,10 @@ def is_valid_keyword(term: str, score: int) -> bool:
     # guard rule 8 would reject every Chinese keyword unconditionally
     # even though the extractor produces legitimate terms like '醫療'
     # or '警方'. Non-ASCII terms are judged by rules 1-7 only.
-    if term.isascii() and not any(w and w[0].isupper() for w in term.split()):
+    if lang not in _NO_CASE_SCRIPTS and term.isascii() and not any(w and w[0].isupper() for w in term.split()):
         return False
 
     return True
-
-
-# Regex patterns for English entity extraction
-_RE_ALLCAPS = re.compile(r'\b[A-Z]{2,6}\b')
-_RE_TITLECASE = re.compile(r'\b(?:[A-Z][a-z]+\s){1,3}[A-Z][a-z]+\b')
-_RE_CAMELCASE = re.compile(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b')   # TikTok, DeepSeek, ByteDance, YouTube
-_RE_NOUN_VERB = re.compile(
-    r'\b([A-Z][a-z]*(?:[A-Z][a-z]*)*[a-z]+)\s+'
-    r'(?:said|announced|reported|reports|unveiled|banned|launched|warned|'
-    r'pledged|signed|approved|filed|sued|wins|loses|beats|misses|cuts|raises|faces)\b'
-)
 
 
 # ---------------------------------------------------------------------------
@@ -281,55 +263,14 @@ def get_llm_classified_items(cutoff_start, cutoff_end) -> list:
 # Step 2 — Extract named entities from titles
 # ---------------------------------------------------------------------------
 
-def extract_english_entities(title: str) -> list[str]:
-    """Extract named entities from an English title using regex patterns."""
-    entities = set()
-
-    # Pattern A: ALL-CAPS abbreviations (2-6 chars): PBOC, TSMC, BYD
-    for m in _RE_ALLCAPS.finditer(title):
-        entities.add(m.group())
-
-    # Pattern B: Title-cased multi-word phrases: "South China Sea", "Federal Reserve"
-    for m in _RE_TITLECASE.finditer(title):
-        entities.add(m.group().strip())
-
-    # Pattern C: Proper noun (any case) followed by action verb
-    for m in _RE_NOUN_VERB.finditer(title):
-        entities.add(m.group(1))
-
-    # Pattern D: CamelCase compound words: TikTok, DeepSeek, ByteDance, YouTube
-    for m in _RE_CAMELCASE.finditer(title):
-        entities.add(m.group())
-
-    # Apply stopword filter and min-length filter
-    return [e for e in entities if e not in STOPWORDS_EN and len(e) >= 2]
-
-
-def extract_chinese_entities(title: str) -> list[str]:
-    """Extract nouns from a Chinese title using jieba POS tagging."""
-    try:
-        import jieba.posseg as pseg
-    except ImportError:
-        logger.warning("jieba not installed — skipping Chinese title extraction")
-        return []
-
-    CHINESE_NOUN_FLAGS = {'n', 'nr', 'ns', 'nt', 'nz'}
-    words = pseg.cut(title)
-    return [
-        w.word.strip()
-        for w in words
-        if w.flag in CHINESE_NOUN_FLAGS and len(w.word.strip()) >= 2
-    ]
-
-
-def extract_entities_from_items(items: list) -> dict[str, dict[str, dict[str, int]]]:
+def extract_entities_from_items(items: list) -> dict[tuple[str, str], dict[str, int]]:
     """
-    For each item, extract entities from title and count per (entity, story_category).
+    For each item, extract entities from title and count per (entity, lang, story_category).
 
-    Returns: {entity: {story_category: count}}
-    Uses story_category (single value) instead of topic_tags (multi-label).
+    Returns: {(entity, lang): {story_category: count}}
     """
-    entity_topic_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    entity_topic_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    lang_counters: dict[str, int] = defaultdict(int)
 
     for item in items:
         title = item.canonical_title or item.title_original or ''
@@ -341,15 +282,15 @@ def extract_entities_from_items(items: list) -> dict[str, dict[str, dict[str, in
             continue
 
         lang = item.lang_group or 'en'
-        if lang == 'zh':
-            entities = extract_chinese_entities(title)
-        else:
-            entities = extract_english_entities(title)
+        extractor = EXTRACTORS.get(lang, DEFAULT_EXTRACTOR)
+        entities = extractor(title, lang)
 
         for entity in entities:
-            entity_topic_counts[entity][category] += 1
+            entity_topic_counts[(entity, lang)][category] += 1
+        lang_counters[lang] += len(entities)
 
-    logger.info(f"Step 2: extracted {len(entity_topic_counts)} unique entities")
+    lang_detail = ', '.join(f'{k}={v}' for k, v in sorted(lang_counters.items()))
+    logger.info(f"Step 2: extracted {len(entity_topic_counts)} unique entities ({lang_detail})")
     return dict(entity_topic_counts)
 
 
@@ -358,7 +299,7 @@ def extract_entities_from_items(items: list) -> dict[str, dict[str, dict[str, in
 # ---------------------------------------------------------------------------
 
 def apply_filters(
-    entity_topic_counts: dict[str, dict[str, int]],
+    entity_topic_counts: dict[tuple[str, str], dict[str, int]],
     min_freq: int,
 ) -> list[dict]:
     """
@@ -367,10 +308,10 @@ def apply_filters(
       - >= 80% of occurrences are in the primary topic
         (primary = most frequent topic; ties broken by sorted VALID_TOPICS order)
 
-    Returns list of {term, context_topic, total_count, purity} dicts.
+    Returns list of {term, lang, context_topic, total_count, purity} dicts.
     """
     candidates = []
-    for entity, topic_counts in entity_topic_counts.items():
+    for (entity, lang), topic_counts in entity_topic_counts.items():
         total = sum(topic_counts.values())
         if total < min_freq:
             continue
@@ -388,6 +329,7 @@ def apply_filters(
 
         candidates.append({
             'term': entity,
+            'lang': lang,
             'context_topic': primary_topic,
             'total_count': total,
             'purity': round(purity, 3),
@@ -402,7 +344,7 @@ def apply_filters(
     pre_filter_count = len(candidates)
     candidates = [
         c for c in candidates
-        if is_valid_keyword(c['term'], c['total_count'])
+        if is_valid_keyword(c['term'], c['total_count'], lang=c['lang'])
     ]
     dropped = pre_filter_count - len(candidates)
     if dropped:
@@ -436,25 +378,10 @@ def _parse_llm_json(raw: str) -> list | None:
     return None
 
 
-def llm_confirm_candidates(candidates: list[dict]) -> list[dict]:
-    """
-    Send candidates to Claude in a single batch for topic confirmation.
-
-    Discard any where:
-      - confirmed_topic not in VALID_TOPICS (invalid label)
-      - confirmed_topic != context_topic (LLM disagrees → cross-topic, discard)
-
-    NOTE ON LLM AUTHORITY: Surviving candidates are treated as authoritative.
-    auto_keywords.json should be reviewed monthly via git diff to guard against
-    systematic LLM misclassification.
-
-    Returns filtered list of confirmed candidates.
-    """
-    if not candidates:
-        return []
-
+def _llm_confirm_chunk(candidates: list[dict]) -> list[dict]:
+    """Send one batch of candidates to Claude for topic confirmation."""
     term_lines = json.dumps(
-        [{'term': c['term'], 'context_topic': c['context_topic']} for c in candidates],
+        [{'term': c['term'], 'lang': c.get('lang', 'en'), 'context_topic': c['context_topic']} for c in candidates],
         ensure_ascii=False,
         indent=2,
     )
@@ -463,7 +390,7 @@ def llm_confirm_candidates(candidates: list[dict]) -> list[dict]:
 For each term, confirm the best topic label from this fixed set:
 world, politics, business, technology, ai, science, society, sports, entertainment
 
-Terms (with the topic they appeared under most often):
+Terms (with the lang_group they came from and the topic they appeared under most often):
 {term_lines}
 
 Return ONLY a JSON array with one entry per term, in the same order.
@@ -471,12 +398,6 @@ Each entry: {{"term": "...", "confirmed_topic": "..."}}
 Do not include confidence scores or any other fields.
 Return exactly {len(candidates)} entries."""
 
-    # 2026-04-14: strip Claude Code harness overhead on every subprocess.
-    # See topic_llm_classifier.py (commit 7163c925) for full rationale —
-    # each plain `claude -p` call was burning ~15-25 KB of input tokens on
-    # the default system prompt, skill manifests, tool catalogue, and
-    # CLAUDE.md that this keyword confirmation task never uses. Flags
-    # strip the harness down to just the model + our prompt.
     try:
         result = subprocess.run(
             [
@@ -541,14 +462,32 @@ Return exactly {len(candidates)} entries."""
     return confirmed
 
 
+def llm_confirm_candidates(candidates: list[dict]) -> list[dict]:
+    """
+    Send candidates to Claude for topic confirmation.
+    Splits into chunks if len(candidates) > harvest_max_batch_size.
+    """
+    if not candidates:
+        return []
+
+    max_batch = int(SystemSettings.get_setting('harvest_max_batch_size', default=50))
+    if len(candidates) > max_batch:
+        all_confirmed: list[dict] = []
+        for i in range(0, len(candidates), max_batch):
+            chunk = candidates[i:i + max_batch]
+            all_confirmed.extend(_llm_confirm_chunk(chunk))
+        return all_confirmed
+    return _llm_confirm_chunk(candidates)
+
+
 # ---------------------------------------------------------------------------
 # Step 5 — Load existing keywords + merge + expire + write
 # ---------------------------------------------------------------------------
 
-def load_existing_keywords() -> dict[str, dict[str, dict]]:
+def load_existing_keywords() -> dict[str, dict[tuple[str, str], dict]]:
     """
     Load auto_keywords.json and return existing keyword state as:
-      {topic: {term: {"last_seen": "YYYY-MM-DD", "score": N}}}
+      {topic: {(term, lang): {"last_seen": "YYYY-MM-DD", "score": N}}}
 
     Handles three entry formats (backwards compatible):
       - Plain string:            "Zelensky"
@@ -563,19 +502,30 @@ def load_existing_keywords() -> dict[str, dict[str, dict]]:
         with open(AUTO_KEYWORDS_PATH, encoding='utf-8') as f:
             data = json.load(f)
         raw = data.get('keywords', {})
-        result: dict[str, dict[str, dict]] = {}
+        result: dict[str, dict[tuple[str, str], dict]] = {}
         for topic, entries in raw.items():
-            topic_kws: dict[str, dict] = {}
+            topic_kws: dict[tuple[str, str], dict] = {}
+            has_legacy = False
             for entry in entries:
                 if isinstance(entry, str):
-                    topic_kws[entry] = {'last_seen': today, 'score': 1}
+                    lang = 'en' if entry.isascii() else 'zh'
+                    topic_kws[(entry, lang)] = {'last_seen': today, 'score': 1}
+                    has_legacy = True
                 elif isinstance(entry, dict):
                     term = entry.get('term')
                     if term and isinstance(term, str):
-                        topic_kws[term] = {
+                        if 'lang' not in entry:
+                            has_legacy = True
+                        lang = entry.get('lang') or ('en' if term.isascii() else 'zh')
+                        topic_kws[(term, lang)] = {
                             'last_seen': entry.get('last_seen', today),
                             'score': int(entry.get('score', 1)),
                         }
+            if has_legacy:
+                logger.info(
+                    f"auto_keywords.json: migrating legacy entries in topic '{topic}' "
+                    f"(pre-2026-04-15 schema, lang defaults applied)"
+                )
             result[topic] = topic_kws
         logger.info(
             f"Loaded {sum(len(v) for v in result.values())} existing keywords "
@@ -622,18 +572,18 @@ def write_auto_keywords(confirmed: list[dict], cutoff_end) -> None:
     updated = 0
     for c in confirmed:
         topic = c['context_topic']
-        term = c['term']
+        key = (c['term'], c.get('lang', 'en'))
         new_count = c['total_count']
 
         if topic not in existing:
             existing[topic] = {}
 
-        if term in existing[topic]:
-            existing[topic][term]['score'] += new_count
-            existing[topic][term]['last_seen'] = today
+        if key in existing[topic]:
+            existing[topic][key]['score'] += new_count
+            existing[topic][key]['last_seen'] = today
             updated += 1
         else:
-            existing[topic][term] = {'last_seen': today, 'score': new_count}
+            existing[topic][key] = {'last_seen': today, 'score': new_count}
             added += 1
 
     logger.info(f"Step 5 merge: {added} new keywords added, {updated} existing updated")
@@ -644,7 +594,7 @@ def write_auto_keywords(confirmed: list[dict], cutoff_end) -> None:
     expired = 0
     for topic in list(existing.keys()):
         surviving = {}
-        for term, kw in existing[topic].items():
+        for key, kw in existing[topic].items():
             try:
                 last_seen_date = date.fromisoformat(kw['last_seen'])
             except (ValueError, KeyError):
@@ -652,7 +602,7 @@ def write_auto_keywords(confirmed: list[dict], cutoff_end) -> None:
             silence_days = (today_date - last_seen_date).days
             threshold = strong_expire_days if kw['score'] >= strong_threshold else expire_days
             if silence_days <= threshold:
-                surviving[term] = kw
+                surviving[key] = kw
             else:
                 expired += 1
         existing[topic] = surviving
@@ -665,8 +615,8 @@ def write_auto_keywords(confirmed: list[dict], cutoff_end) -> None:
     for topic, kws in existing.items():
         if kws:  # skip empty topics
             output_keywords[topic] = [
-                {'term': term, 'last_seen': kw['last_seen'], 'score': kw['score']}
-                for term, kw in sorted(kws.items())
+                {'term': term, 'lang': lang, 'last_seen': kw['last_seen'], 'score': kw['score']}
+                for (term, lang), kw in sorted(kws.items())
             ]
 
     output = {
@@ -775,4 +725,34 @@ def run_harvest() -> None:
 
 
 if __name__ == '__main__':
-    run_harvest()
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Keyword harvest worker')
+    parser.add_argument('--once', action='store_true', help='Run once and exit (default behaviour)')
+    parser.add_argument('--shadow', action='store_true',
+                        help='Write to auto_keywords.shadow.json instead of live file')
+    parser.add_argument('--dry-run-lang', metavar='LANG',
+                        help='Run pipeline for a single lang_group and print what would be written, without persisting')
+    args = parser.parse_args()
+
+    if args.shadow:
+        AUTO_KEYWORDS_PATH = AUTO_KEYWORDS_PATH.parent / 'auto_keywords.shadow.json'
+        logger.info(f"Shadow mode: writing to {AUTO_KEYWORDS_PATH}")
+
+    if args.dry_run_lang:
+        lang = args.dry_run_lang
+        logger.info(f"=== Dry-run for lang={lang} ===")
+        cutoff_end = timezone.now()
+        cutoff_start = cutoff_end - timedelta(hours=24)
+        items = get_llm_classified_items(cutoff_start, cutoff_end)
+        items = [i for i in items if (i.lang_group or 'en') == lang]
+        logger.info(f"Filtered to {len(items)} items for lang={lang}")
+        if items:
+            entity_topic_counts = extract_entities_from_items(items)
+            min_freq = int(SystemSettings.get_setting('harvest_min_freq', default=1))
+            candidates = apply_filters(entity_topic_counts, min_freq=min_freq)
+            logger.info(f"Would confirm {len(candidates)} candidates (skipping LLM in dry-run):")
+            for c in candidates:
+                logger.info(f"  {c}")
+    else:
+        run_harvest()

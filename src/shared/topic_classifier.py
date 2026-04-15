@@ -289,6 +289,11 @@ def _load_auto_keywords() -> dict[str, list[str]]:
     try:
         with open(_AUTO_KEYWORDS_PATH) as f:
             data = json.load(f)
+        if data.get('generated_at', '') < '2026-04-15T00:00:00Z':
+            logger.info(
+                "auto_keywords.json: pre-multilingual-schema file detected "
+                "(entries lack lang field; treated as lang-agnostic)"
+            )
         raw = data.get('keywords', {})
         result: dict[str, list[str]] = {}
         for category, entries in raw.items():
