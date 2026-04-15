@@ -16,6 +16,7 @@ Migrated from: /home/tnnd/data/code/trend/trend_agent/collectors/hackernews.py
 
 import asyncio
 import logging
+import re
 from typing import Optional, Tuple, List
 from datetime import datetime, timezone
 
@@ -25,6 +26,7 @@ from .collector_interface import CollectedItem
 from shared.http_client import RateLimitedClient
 from shared.human_behavior import HumanBrowsingSession
 from shared.url_utils import extract_domain
+from shared.comment_settings import get_top_comments_count
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +35,86 @@ TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
 HN_BASE_URL = "https://news.ycombinator.com/item?id={}"
 
+# HTML entity map for comment text cleanup
+_HTML_ENTITIES = {
+    '&gt;': '>',
+    '&lt;': '<',
+    '&amp;': '&',
+    '&#x27;': "'",
+    '&#x2F;': '/',
+    '&quot;': '"',
+    '&nbsp;': ' ',
+}
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags and decode common entities from HN comment text."""
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', ' ', text)
+    # Decode common entities
+    for entity, char in _HTML_ENTITIES.items():
+        text = text.replace(entity, char)
+    # Collapse whitespace
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+async def fetch_story_comments(
+    client: httpx.AsyncClient,
+    kid_ids: List[int],
+    limit: int,
+) -> List[str]:
+    """
+    Fetch the top `limit` comments for a Hacker News story.
+
+    HN stores top-level comment IDs in the story's `kids` field, ordered by
+    HN's own ranking (best first). We fetch each comment individually using
+    the Firebase API and strip HTML markup from the text.
+
+    Args:
+        client: HTTP client
+        kid_ids: Top-level comment IDs from story['kids']
+        limit: Maximum number of comments to return
+
+    Returns:
+        List of plain-text comment strings (up to 300 chars each), empty on failure
+    """
+    if not kid_ids or limit <= 0:
+        return []
+
+    # Fetch 2× the limit to account for deleted/empty comments, then trim.
+    candidate_ids = kid_ids[:limit * 2]
+
+    sem = asyncio.Semaphore(5)
+
+    async def _fetch_one(cid: int) -> Optional[str]:
+        async with sem:
+            try:
+                resp = await client.get(ITEM_URL.format(cid), timeout=8.0)
+                resp.raise_for_status()
+                data = resp.json()
+                if not data or data.get('type') != 'comment':
+                    return None
+                if data.get('deleted') or data.get('dead'):
+                    return None
+                text = data.get('text', '').strip()
+                if not text:
+                    return None
+                return _strip_html(text)[:300]
+            except Exception as e:
+                logger.debug(f"Failed to fetch HN comment {cid}: {e}")
+                return None
+
+    raw_results = await asyncio.gather(*[_fetch_one(cid) for cid in candidate_ids])
+
+    comments = [r for r in raw_results if r][:limit]
+    return comments
+
 
 async def fetch_story(
     client: httpx.AsyncClient,
     story_id: int,
-    rank: int
+    rank: int,
+    top_comments_count: int = 0,
 ) -> Optional[CollectedItem]:
     """
     Fetch a single Hacker News story by ID.
@@ -46,6 +123,7 @@ async def fetch_story(
         client: httpx async client
         story_id: Story ID from HN API
         rank: Position in top stories (1-based)
+        top_comments_count: Number of top comments to fetch (0 = disabled)
 
     Returns:
         CollectedItem dict or None if fetch fails
@@ -74,6 +152,7 @@ async def fetch_story(
         descendants = data.get("descendants", 0)  # Comment count
         author = data.get("by", "")
         timestamp = data.get("time", 0)
+        kid_ids: List[int] = data.get("kids", [])  # Top-level comment IDs
 
         # Convert Unix timestamp to ISO8601
         published_at = None
@@ -83,8 +162,17 @@ async def fetch_story(
             except (ValueError, OSError):
                 pass
 
-        # Build description from text if available
+        # Build description from text if available (Ask HN / Show HN posts)
         description = text[:1000] if text else None
+
+        # Fetch top comments if enabled
+        top_comments: List[str] = []
+        if top_comments_count > 0 and kid_ids:
+            top_comments = await fetch_story_comments(client, kid_ids, top_comments_count)
+            if top_comments:
+                logger.debug(
+                    f"Fetched {len(top_comments)} comments for HN story {story_id}"
+                )
 
         # Build collected item
         item: CollectedItem = {
@@ -108,7 +196,8 @@ async def fetch_story(
                     "type": data.get("type", "story"),
                     "hn_url": HN_BASE_URL.format(story_id),
                     "author": author,
-                }
+                },
+                "top_comments": top_comments,
             },
         }
 
@@ -145,6 +234,8 @@ async def collect(
         - max_stories: Maximum stories to fetch (default: 30)
         - timeout: Request timeout in seconds (default: 30)
         - max_concurrent: Max concurrent fetches (default: 10)
+        - top_comments: Override number of comments to fetch per story (0 = disable).
+                        Falls back to global SystemSettings[crawler.top_comments_per_post].
 
     Args:
         config: Surface configuration
@@ -164,6 +255,9 @@ async def collect(
     max_stories = min(config.get('max_stories', 30), limit)
     timeout = config.get('timeout', 30.0)
     max_concurrent = config.get('max_concurrent', 10)
+
+    # Resolve how many comments to fetch per story (0 = disabled)
+    top_comments_count = await get_top_comments_count(config)
 
     logger.info(f"Collecting Hacker News top stories: limit={max_stories}, concurrent={max_concurrent}")
 
@@ -198,7 +292,9 @@ async def collect(
             async def fetch_with_semaphore(story_id: int, rank: int):
                 """Fetch story with concurrency control."""
                 async with semaphore:
-                    return await fetch_story(client, story_id, rank)
+                    return await fetch_story(
+                        client, story_id, rank, top_comments_count=top_comments_count
+                    )
 
             tasks = [
                 fetch_with_semaphore(story_id, rank)

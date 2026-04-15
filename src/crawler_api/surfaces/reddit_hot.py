@@ -22,22 +22,24 @@ import httpx
 
 from .collector_interface import CollectedItem
 from shared.http_client import RateLimitedClient
+from shared.comment_settings import get_top_comments_count
 
 logger = logging.getLogger(__name__)
 
 # Reddit JSON API base URL
 REDDIT_BASE = "https://www.reddit.com"
 
-# Fetch top comments only for top N link posts (no selftext)
-COMMENT_FETCH_RANK_LIMIT = 20
-TOP_COMMENTS_COUNT = 5
+# Maximum number of link posts to attempt comment fetching on per run.
+# This caps extra API calls without affecting how many comments are stored
+# per post (controlled by crawler.top_comments_per_post SystemSetting).
+COMMENT_FETCH_POST_LIMIT = 20
 
 
 async def fetch_top_comments(
     client: RateLimitedClient,
     post_id: str,
     headers: dict,
-    limit: int = TOP_COMMENTS_COUNT,
+    limit: int,
 ) -> List[str]:
     """
     Fetch top comments for a Reddit link post.
@@ -50,7 +52,8 @@ async def fetch_top_comments(
         client: HTTP client
         post_id: Reddit post ID (e.g. "abc123")
         headers: Request headers (must include User-Agent)
-        limit: Max number of comments to fetch
+        limit: Max number of comments to fetch (0 = disabled, resolved from
+               config_json.top_comments or crawler.top_comments_per_post setting)
 
     Returns:
         List of comment body strings, empty on failure
@@ -105,6 +108,8 @@ async def collect(
         - subreddit: Subreddit to collect from (default: "all")
         - mode: Feed mode — "hot" (default) or "new" (early signal detection)
         - time_filter: Time filter for hot posts (optional: hour, day, week, month, year, all)
+        - top_comments: Override number of comments to fetch per post (0 = disable).
+                        Falls back to global SystemSettings[crawler.top_comments_per_post].
 
     Args:
         config: Surface configuration
@@ -121,6 +126,9 @@ async def collect(
     subreddit = config.get('subreddit', 'all')
     mode = config.get('mode', 'hot')  # "hot" (default) or "new" (early signal)
     time_filter = config.get('time_filter')  # Optional
+
+    # Resolve how many comments to fetch per post (0 = disabled)
+    top_comments_count = await get_top_comments_count(config)
 
     # Reddit typically allows up to 100 items per request
     actual_limit = min(limit, 100)
@@ -156,34 +164,38 @@ async def collect(
         response.raise_for_status()
         data = response.json()
 
-        # Fetch top comments for top-ranked link posts (no selftext)
-        # Collect candidate post IDs first, then fetch concurrently (max 3 at a time)
-        posts_preview = data.get('data', {}).get('children', [])
-        link_post_ids = []
-        for pw in posts_preview[:COMMENT_FETCH_RANK_LIMIT]:
-            p = pw.get('data', {})
-            if pw.get('kind') != 't3':
-                continue
-            if p.get('over_18', False):
-                continue
-            if not p.get('is_self', False):
-                pid = p.get('id', '')
-                if pid:
-                    link_post_ids.append(pid)
-
-        # Fetch concurrently with semaphore to avoid rate-limiting
+        # Fetch top comments for top-ranked link posts (no selftext).
+        # Skipped entirely when top_comments_count == 0.
         top_comments_map: dict = {}
-        sem = asyncio.Semaphore(3)
 
-        async def _fetch_with_sem(pid: str):
-            async with sem:
-                return pid, await fetch_top_comments(client, pid, headers)
+        if top_comments_count > 0:
+            posts_preview = data.get('data', {}).get('children', [])
+            link_post_ids = []
+            for pw in posts_preview[:COMMENT_FETCH_POST_LIMIT]:
+                p = pw.get('data', {})
+                if pw.get('kind') != 't3':
+                    continue
+                if p.get('over_18', False):
+                    continue
+                if not p.get('is_self', False):
+                    pid = p.get('id', '')
+                    if pid:
+                        link_post_ids.append(pid)
 
-        results = await asyncio.gather(*[_fetch_with_sem(pid) for pid in link_post_ids])
-        for pid, comments in results:
-            if comments:
-                top_comments_map[pid] = comments
-                logger.debug(f"Fetched {len(comments)} comments for link post {pid}")
+            # Fetch concurrently with semaphore to avoid rate-limiting
+            sem = asyncio.Semaphore(3)
+
+            async def _fetch_with_sem(pid: str):
+                async with sem:
+                    return pid, await fetch_top_comments(
+                        client, pid, headers, limit=top_comments_count
+                    )
+
+            results = await asyncio.gather(*[_fetch_with_sem(pid) for pid in link_post_ids])
+            for pid, comments in results:
+                if comments:
+                    top_comments_map[pid] = comments
+                    logger.debug(f"Fetched {len(comments)} comments for link post {pid}")
 
     # Parse response
     items: List[CollectedItem] = []

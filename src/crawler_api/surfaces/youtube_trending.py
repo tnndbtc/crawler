@@ -30,22 +30,22 @@ import httpx
 
 from .collector_interface import CollectedItem
 from shared.http_client import RateLimitedClient
+from shared.comment_settings import get_top_comments_count
 
 logger = logging.getLogger(__name__)
 
 # YouTube Data API v3 endpoint
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
-# Fetch top comments only for top N videos
-COMMENT_FETCH_RANK_LIMIT = 20
-TOP_COMMENTS_COUNT = 5
+# Maximum number of videos to attempt comment fetching on per run.
+COMMENT_FETCH_POST_LIMIT = 20
 
 
 async def fetch_top_comments(
     client: httpx.AsyncClient,
     api_key: str,
     video_id: str,
-    limit: int = TOP_COMMENTS_COUNT,
+    limit: int,
 ) -> List[str]:
     """
     Fetch top comments for a YouTube video.
@@ -57,7 +57,7 @@ async def fetch_top_comments(
         client: HTTP client
         api_key: YouTube Data API key
         video_id: YouTube video ID
-        limit: Max number of comments to fetch
+        limit: Max number of comments to fetch (resolved from config or SystemSettings)
 
     Returns:
         List of comment text strings, empty on failure
@@ -104,7 +104,8 @@ async def fetch_popular_recent_videos(
     region_code: str,
     limit: int,
     locale: str,
-    start_rank: int = 1
+    top_comments_count: int,
+    start_rank: int = 1,
 ) -> List[CollectedItem]:
     """
     Fetch most viewed videos from the last 24 hours using search API.
@@ -118,6 +119,7 @@ async def fetch_popular_recent_videos(
         region_code: Region code
         limit: Maximum videos to fetch
         locale: Locale code
+        top_comments_count: Number of comments to fetch per video (0 = disabled)
         start_rank: Starting rank position for these videos
 
     Returns:
@@ -200,10 +202,12 @@ async def fetch_popular_recent_videos(
             likes = int(statistics.get('likeCount', 0))
             comments = int(statistics.get('commentCount', 0))
 
-            # Fetch top comments for top-ranked videos
+            # Fetch top comments for top-ranked videos (skipped when count == 0)
             top_comments: List[str] = []
-            if rank <= COMMENT_FETCH_RANK_LIMIT:
-                top_comments = await fetch_top_comments(client, api_key, video_id)
+            if top_comments_count > 0 and rank <= COMMENT_FETCH_POST_LIMIT:
+                top_comments = await fetch_top_comments(
+                    client, api_key, video_id, limit=top_comments_count
+                )
 
             # Extract best available thumbnail URL
             thumbnails = snippet.get('thumbnails', {})
@@ -480,7 +484,8 @@ async def collect(
 
       mode="trending" (default)
         Fetches the mostPopular chart for a region.
-        Config keys: region_code, video_category_id, locale, dual_mode
+        Config keys: region_code, video_category_id, locale, dual_mode,
+                     top_comments (override comments per video; 0 = disable)
 
       mode="search"
         Fetches videos matching a text query.
@@ -512,6 +517,9 @@ async def collect(
 
     locale = config.get('locale', 'en-US')
     mode = config.get('mode', 'trending')
+
+    # Resolve how many comments to fetch per video (0 = disabled)
+    top_comments_count = await get_top_comments_count(config)
 
     # ── Search mode ───────────────────────────────────────────────────────────
     if mode == 'search':
@@ -628,10 +636,12 @@ async def collect(
             likes = int(statistics.get('likeCount', 0))
             comments = int(statistics.get('commentCount', 0))
 
-            # Fetch top comments for top-ranked videos
+            # Fetch top comments for top-ranked videos (skipped when count == 0)
             top_comments: List[str] = []
-            if rank <= COMMENT_FETCH_RANK_LIMIT:
-                top_comments = await fetch_top_comments(client, api_key, video_id)
+            if top_comments_count > 0 and rank <= COMMENT_FETCH_POST_LIMIT:
+                top_comments = await fetch_top_comments(
+                    client, api_key, video_id, limit=top_comments_count
+                )
 
             # Extract best available thumbnail URL
             thumbnails = snippet.get('thumbnails', {})
@@ -682,7 +692,8 @@ async def collect(
                 region_code=region_code,
                 limit=popular_limit,
                 locale=locale,
-                start_rank=len(items) + 1  # Continue ranking after trending videos
+                top_comments_count=top_comments_count,
+                start_rank=len(items) + 1,  # Continue ranking after trending videos
             )
             items.extend(popular_items)
 

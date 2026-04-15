@@ -124,6 +124,9 @@ is_service_running() {
         region_classifier_worker)
             process_pid=$(ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             ;;
+        embedding_worker)
+            process_pid=$(ps aux | grep "python.*embedding_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
+            ;;
         topic_classifier_worker)
             process_pid=$(ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
             ;;
@@ -181,6 +184,9 @@ get_service_pid() {
             ;;
         region_classifier_worker)
             ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
+            ;;
+        embedding_worker)
+            ps aux | grep "python.*embedding_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
             ;;
         topic_classifier_worker)
             ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
@@ -375,6 +381,9 @@ stop_service() {
         region_classifier_worker)
             all_pids=$(ps aux | grep -E "region_classifier_worker\.(py|sh)|tee.*region_classifier_worker" | grep -v grep | awk '{print $2}')
             ;;
+        embedding_worker)
+            all_pids=$(ps aux | grep -E "embedding_worker\.(py|sh)|tee.*embedding_worker" | grep -v grep | awk '{print $2}')
+            ;;
         topic_classifier_worker)
             all_pids=$(ps aux | grep -E "topic_classifier_worker\.(py|sh)|tee.*topic_classifier_worker" | grep -v grep | awk '{print $2}')
             ;;
@@ -526,6 +535,13 @@ load_seeds()
         print_info "Topic Classifier Worker: DISABLED (ENABLE_TOPIC_CLASSIFIER=false in .env)"
     fi
 
+    if [ "${ENABLE_EMBEDDING_WORKER:-true}" = "true" ]; then
+        start_service "embedding_worker" "Embedding Worker" \
+            "${SCRIPT_DIR}/scripts/run_embedding_worker.sh"
+    else
+        print_info "Embedding Worker: DISABLED (ENABLE_EMBEDDING_WORKER=false in .env)"
+    fi
+
     echo ""
     print_success "All services started!"
     print_info "Use option 5 to check service status"
@@ -538,6 +554,7 @@ stop_all_services() {
 
     # Step 1: Stop tracked services (original behavior)
     print_step "Stopping tracked services..."
+    stop_service "embedding_worker" "Embedding Worker"
     stop_service "topic_classifier_worker" "Topic Classifier Worker"
     stop_service "region_classifier_worker" "Region Classifier Worker"
     stop_service "summarization_worker" "Summarization Worker"
@@ -551,7 +568,7 @@ stop_all_services() {
     print_step "Checking for untracked worker processes..."
 
     # Find ALL Python worker processes (scripts and actual workers)
-    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|hotness_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
+    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|hotness_worker\.py|embedding_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
 
     if [ ! -z "$worker_pids" ]; then
         print_warning "Found untracked worker processes, stopping them..."
@@ -612,7 +629,7 @@ restart_all_services() {
 start_or_restart_services() {
     # If anything is running, restart. Otherwise just start.
     local any_running=false
-    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker region_classifier_worker topic_classifier_worker; do
+    for svc in django_admin api_server surface_worker translation_worker hotness_worker summarization_worker region_classifier_worker topic_classifier_worker embedding_worker; do
         if is_service_running "$svc"; then
             any_running=true
             break
@@ -638,6 +655,7 @@ show_service_status() {
         "summarization_worker:Summarization Worker:-"
         "region_classifier_worker:Region Classifier Worker:-"
         "topic_classifier_worker:Topic Classifier Worker:-"
+        "embedding_worker:Embedding Worker:-"
     )
 
     echo -e "${BOLD}Service                    Status      PID       Port${NC}"
