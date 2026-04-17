@@ -36,19 +36,48 @@ def _is_llm_enabled() -> bool:
         return True
 
 
-def get_unclassified_items(limit: int = 500) -> list:
+def get_unclassified_items(per_platform: int | None = None) -> list:
     """
-    Get items where classification was never attempted.
-    Excludes items the LLM already checked and returned 'no region'.
+    Fetch top N never-tried items per platform, ordered by hotness desc.
+
+    Uses region_per_platform_limit SystemSetting (default 50) so every platform
+    gets proportional coverage — prevents high-volume platforms from monopolising
+    the region classification queue and starving niche platforms of LLM budget.
     """
-    return list(
-        TrendItem.objects.filter(
-            content_regions=[],
-            region_classified_at__isnull=True,
-        )
-        .select_related('surface', 'region')
-        .order_by('-hotness')[:limit]
+    if per_platform is None:
+        try:
+            per_platform = int(
+                SystemSettings.get_setting('region_per_platform_limit', default=50)
+            )
+        except Exception:
+            per_platform = 50
+
+    platforms = (
+        TrendItem.objects
+        .filter(content_regions=[], region_classified_at__isnull=True)
+        .order_by()          # clear default ordering — otherwise Django appends
+                             # "collected_at" to the DISTINCT SELECT, making every
+                             # row unique and returning ~N items instead of ~27 platforms.
+        .values_list('surface__platform', flat=True)
+        .distinct()
     )
+
+    result = []
+    for platform in platforms:
+        items = list(
+            TrendItem.objects
+            .filter(
+                content_regions=[],
+                region_classified_at__isnull=True,
+                surface__platform=platform,
+            )
+            .select_related('surface', 'region')
+            .order_by('-hotness')[:per_platform]
+        )
+        result.extend(items)
+
+    result.sort(key=lambda x: x.hotness or 0, reverse=True)
+    return result
 
 
 def run_heuristic_pass(items: list) -> tuple[int, list]:
@@ -74,7 +103,8 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
             item.content_regions = regions
             item.primary_region = primary
             item.region_classified_at = now
-            item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at'])
+            item.region_classification_method = 'heuristic'
+            item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at', 'region_classification_method'])
             classified += 1
         else:
             remaining.append(item)
@@ -82,67 +112,54 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
     return classified, remaining
 
 
-def _get_locale_hot_percent(lang_group: str | None) -> int:
+def _filter_top_k_per_platform(items: list) -> list:
     """
-    Get the per-locale hotness percent threshold for LLM classification.
-    Reads translation_hot_percent_<lang_group> from SystemSettings.
-    Falls back to translation_hot_percent (global) then to 10.
-    """
-    try:
-        from crawler_admin.models import SystemSettings
-        if lang_group:
-            key = f'translation_hot_percent_{lang_group}'
-            val = SystemSettings.get_setting(key, default=None)
-            if val is not None:
-                return int(val)
-        # Fallback to global
-        return int(SystemSettings.get_setting('translation_hot_percent', default=10))
-    except Exception:
-        return 10
+    Keep top K items per platform for the LLM pass.
 
-
-def _filter_top_percent_per_locale(items: list) -> list:
-    """
-    Keep only the top N% by hotness WITHIN EACH lang_group.
-    Each locale has its own translation_hot_percent_<locale> setting.
-
-    Items are already sorted by -hotness, so we group by lang_group and
-    keep the top N% of each group.
+    Uses region_llm_top_k_per_platform SystemSetting (default 20).
+    Replaces the old per-locale percentage filter: per-platform top-K aligns
+    with how story_engine windows items (per-platform top-K then global limit),
+    ensuring LLM budget is distributed across platforms rather than dominated
+    by high-volume platforms whose items structurally score higher.
     """
     if not items:
         return items
 
-    # Group items by lang_group (preserving hotness order within each group)
-    by_locale: dict[str, list] = {}
+    from collections import defaultdict
+    try:
+        k = int(SystemSettings.get_setting('region_llm_top_k_per_platform', default=20))
+    except Exception:
+        k = 20
+
+    by_platform: dict[str, list] = defaultdict(list)
     for item in items:
-        lg = item.lang_group or 'unknown'
-        by_locale.setdefault(lg, []).append(item)
+        platform = item.surface.platform if item.surface else 'unknown'
+        by_platform[platform].append(item)
 
-    # For each locale, keep only top N%
     kept = []
-    for lg, group in by_locale.items():
-        percent = _get_locale_hot_percent(lg)
-        cutoff = max(1, len(group) * percent // 100)
-        kept.extend(group[:cutoff])
-        logger.info(f"  LLM top {percent}% for lang={lg}: {cutoff}/{len(group)}")
-
+    for platform, group in by_platform.items():
+        group.sort(key=lambda x: x.hotness or 0, reverse=True)
+        kept.extend(group[:k])
+        logger.info(
+            f"  Region LLM top {k} for platform={platform}: "
+            f"{min(k, len(group))}/{len(group)}"
+        )
     return kept
 
 
 def run_llm_pass(items: list) -> int:
     """
     Run LLM classification on remaining items.
-    Only processes items in the top N% by hotness WITHIN each locale,
-    using translation_hot_percent_<locale> per-locale settings.
+    Only processes the top K items per platform to control LLM cost.
     Returns classified_count.
     """
     if not _is_llm_enabled():
         logger.info("LLM classification disabled (enable_llm_classification=false)")
         return 0
 
-    # Only classify top N% by hotness (per locale) to save LLM cost
-    items = _filter_top_percent_per_locale(items)
-    logger.info(f"LLM total after per-locale filtering: {len(items)} items")
+    # Only classify top K per platform to save LLM cost
+    items = _filter_top_k_per_platform(items)
+    logger.info(f"LLM total after per-platform filtering: {len(items)} items")
 
     classified = 0
 
@@ -162,14 +179,15 @@ def run_llm_pass(items: list) -> int:
         for item, (regions, primary) in zip(batch, results):
             # Always set region_classified_at so we don't re-process this item
             item.region_classified_at = now
+            item.region_classification_method = 'llm'
             if regions:
                 item.content_regions = regions
                 item.primary_region = primary
-                item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at'])
+                item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at', 'region_classification_method'])
                 classified += 1
             else:
                 # LLM said no specific region — mark as tried so we don't re-ask
-                item.save(update_fields=['region_classified_at'])
+                item.save(update_fields=['region_classified_at', 'region_classification_method'])
 
     return classified
 
@@ -190,9 +208,9 @@ def run_once():
     if not remaining:
         return
 
-    # LLM pass for remaining items (only top N% per locale will actually be sent)
+    # LLM pass for remaining items (only top K per platform will actually be sent)
     if _is_llm_enabled():
-        llm_sent_items = _filter_top_percent_per_locale(remaining)
+        llm_sent_items = _filter_top_k_per_platform(remaining)
         llm_sent_urls = {item.id for item in llm_sent_items}
         llm_count = 0
         if llm_sent_items:
@@ -200,6 +218,7 @@ def run_once():
         logger.info(f"LLM: classified {llm_count}, sent {len(llm_sent_items)}, unclassified {len(remaining) - llm_count}")
     else:
         # LLM disabled — mark every remaining item as tried so they don't re-poll
+        # (all items land in not_sent block below, which sets region_classification_method='skipped')
         logger.info(f"LLM disabled — marking {len(remaining)} remaining items as tried")
         llm_sent_urls = set()
 
@@ -209,7 +228,8 @@ def run_once():
     not_sent = [item for item in remaining if item.id not in llm_sent_urls]
     for item in not_sent:
         item.region_classified_at = now
-        item.save(update_fields=['region_classified_at'])
+        item.region_classification_method = 'skipped'
+        item.save(update_fields=['region_classified_at', 'region_classification_method'])
     if not_sent:
         logger.info(f"Marked {len(not_sent)} low-hotness items as tried (skip LLM)")
 

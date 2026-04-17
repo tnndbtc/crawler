@@ -472,6 +472,17 @@ class TrendItem(models.Model):
                   "or LLM). NULL = never tried. Prevents re-processing items "
                   "that LLM classified as no-region."
     )
+    region_classification_method = models.CharField(
+        max_length=16,
+        null=True, blank=True,
+        help_text=(
+            "Which method produced the region result: "
+            "heuristic = keyword/rule pass succeeded; "
+            "llm = sent to LLM (region found or not); "
+            "skipped = heuristic failed and below hotness threshold (LLM not called). "
+            "NULL = legacy item classified before this field was added."
+        ),
+    )
 
     # Topic classification (for story_engine story selection)
     topic_tags = models.JSONField(

@@ -350,6 +350,7 @@ stop_service() {
     local service_description="$2"
 
     local pid_file="${PID_DIR}/${service_name}.pid"
+    local log_file="${LOG_DIR}/${service_name}.log"
 
     if ! is_service_running "$service_name"; then
         print_info "$service_description is not running"
@@ -469,6 +470,24 @@ start_all_services() {
         fi
         print_success "Database created"
     fi
+
+    # Enable WAL journal mode on SQLite (idempotent — safe to run every start).
+    # WAL allows readers (option 7, admin) and writers (workers) to run at the
+    # same time without "database is locked" errors.  Must be set while no worker
+    # holds an exclusive lock, which is guaranteed here (workers haven't started yet).
+    print_step "Enabling SQLite WAL mode..."
+    python3 -c "
+import sqlite3, sys
+conn = sqlite3.connect('${DB_FILE}', timeout=5)
+result = conn.execute('PRAGMA journal_mode=WAL;').fetchone()
+conn.execute('PRAGMA synchronous=NORMAL;')
+conn.close()
+if result and result[0] == 'wal':
+    print('WAL mode active')
+else:
+    print(f'journal mode: {result[0] if result else \"unknown\"}')
+" 2>&1 | grep -v "virtualenvwrapper"
+    print_success "SQLite WAL mode enabled"
 
     # Auto-seed from config/seeds.json (idempotent — safe to run every start)
     print_step "Loading seeds from config/seeds.json..."
@@ -1689,54 +1708,83 @@ show_pipeline_queue_status() {
     print_header "Pipeline Queue Status"
 
     python3 manage.py shell -c "
-from crawler_admin.models import TrendItem, ItemDerivation
+from crawler_admin.models import TrendItem, ItemDerivation, SystemSettings
 from django.db.models import Count, Exists, OuterRef
 
 LOCALES = ['en','zh','ja','ko','ru','pt','de','es','fr','ar','hi','id','tr','it','pl']
 
-# Summarization queue per locale
+# ── Bulk-load SystemSettings once ─────────────────────────────────────────
+# Avoids 2×N DB hits inside per-locale loops below.
+all_settings = {obj.key: obj.value_json for obj in SystemSettings.objects.all()}
+
+def _hot_pct(lg):
+    try:
+        v = all_settings.get(f'translation_hot_percent_{lg}')
+        if v is None:
+            v = all_settings.get('translation_hot_percent', 10)
+        return int(v)
+    except Exception:
+        return 10
+
+# ── 1. Summarization Queue ─────────────────────────────────────────────────
+# One GROUP BY query instead of 4×15 = 60 individual COUNT queries.
 print('--- Summarization Queue ---')
 print(f'  {\"Locale\":<8} {\"Queued\":>8} {\"Complete\":>10} {\"Pending\":>9} {\"Total\":>8}')
 print('  ' + '-'*47)
+
+raw_summ = (
+    TrendItem.objects
+    .values('lang_group', 'summary_status')
+    .annotate(c=Count('id'))
+)
+summ = {}
+for row in raw_summ:
+    lg = row['lang_group']
+    summ.setdefault(lg, {})[row['summary_status']] = row['c']
+
 total_q = total_c = total_p = total_t = 0
 for lg in LOCALES:
-    q = TrendItem.objects.filter(lang_group=lg, summary_status='queued').count()
-    c = TrendItem.objects.filter(lang_group=lg, summary_status='complete').count()
-    p = TrendItem.objects.filter(lang_group=lg, summary_status='pending').count()
-    t = TrendItem.objects.filter(lang_group=lg).count()
+    s = summ.get(lg, {})
+    t = sum(s.values())
     if t == 0:
         continue
+    q = s.get('queued', 0); c = s.get('complete', 0); p = s.get('pending', 0)
     print(f'  {lg:<8} {q:>8} {c:>10} {p:>9} {t:>8}')
     total_q += q; total_c += c; total_p += p; total_t += t
 print('  ' + '-'*47)
 print(f'  {\"TOTAL\":<8} {total_q:>8} {total_c:>10} {total_p:>9} {total_t:>8}')
 
-# Translation queue per locale
+# ── 2. Translation Queue ───────────────────────────────────────────────────
+# Two GROUP BY queries instead of 2×14 = 28 individual COUNT queries.
 print()
 print('--- Translation Queue (ready to translate to zh-Hans) ---')
-has_translation = ItemDerivation.objects.filter(
-    item_id=OuterRef('id'),
-    derivation_type='translation',
-    target_locale='zh-Hans',
-    status='complete'
-)
 print(f'  {\"Locale\":<8} {\"Summarized\":>12} {\"Done\":>8}')
 print('  ' + '-'*32)
+
+has_translation = ItemDerivation.objects.filter(
+    item_id=OuterRef('id'), derivation_type='translation',
+    target_locale='zh-Hans', status='complete',
+)
+ready_map = {
+    r['lang_group']: r['c'] for r in (
+        TrendItem.objects
+        .filter(summary_status__in=['complete','skipped'], display_status_zh_hans='pending')
+        .exclude(lang_group='zh').exclude(Exists(has_translation))
+        .values('lang_group').annotate(c=Count('id'))
+    )
+}
+done_map = {
+    r['item__lang_group']: r['c'] for r in (
+        ItemDerivation.objects
+        .filter(derivation_type='translation', target_locale='zh-Hans', status='complete')
+        .values('item__lang_group').annotate(c=Count('item_id'))
+    )
+}
 total_r = total_d = 0
 for lg in LOCALES:
     if lg == 'zh':
         continue
-    ready = TrendItem.objects.filter(
-        lang_group=lg,
-        summary_status__in=['complete','skipped'],
-        display_status_zh_hans='pending'
-    ).exclude(Exists(has_translation)).count()
-    done = ItemDerivation.objects.filter(
-        item__lang_group=lg,
-        derivation_type='translation',
-        target_locale='zh-Hans',
-        status='complete'
-    ).count()
+    ready = ready_map.get(lg, 0); done = done_map.get(lg, 0)
     if ready == 0 and done == 0:
         continue
     print(f'  {lg:<8} {ready:>12} {done:>8}')
@@ -1744,138 +1792,129 @@ for lg in LOCALES:
 print('  ' + '-'*32)
 print(f'  {\"TOTAL\":<8} {total_r:>12} {total_d:>8}')
 
-# Region classification queue
+# ── 3. Region Classification Queue ────────────────────────────────────────
+# Uses primary_region (indexed varchar) as proxy for content_regions != []:
+#   primary_region IS NOT NULL  ↔  content_regions is non-empty
+#   primary_region IS NULL      ↔  content_regions is empty
+# region_classified_at has db_index=True — used for pending/tried split.
+# Avoids all JSONField full-table scans.
 print()
 print('--- Region Classification Queue ---')
+
 total_items = TrendItem.objects.count()
-classified = TrendItem.objects.exclude(content_regions=[]).count()
-unclassified = TrendItem.objects.filter(content_regions=[]).count()
-# Pending = never tried (will be processed next cycle)
-pending = TrendItem.objects.filter(
-    content_regions=[], region_classified_at__isnull=True
-).count()
-# Tried but LLM returned no region
-tried_no_region = TrendItem.objects.filter(
-    content_regions=[], region_classified_at__isnull=False
-).count()
+classified      = TrendItem.objects.filter(primary_region__isnull=False).count()
+pending         = TrendItem.objects.filter(primary_region__isnull=True, region_classified_at__isnull=True).count()
+tried_no_region = TrendItem.objects.filter(primary_region__isnull=True, region_classified_at__isnull=False).count()
+unclassified    = pending + tried_no_region
+
+method_map = {
+    r['region_classification_method']: r['c'] for r in (
+        TrendItem.objects.filter(primary_region__isnull=False)
+        .values('region_classification_method').annotate(c=Count('id'))
+    )
+}
+classified_by_llm       = method_map.get('llm', 0)
+classified_by_heuristic = method_map.get('heuristic', 0)
+classified_unknown      = classified - classified_by_llm - classified_by_heuristic
 
 print(f'  Total items:           {total_items:>8}')
 print(f'  Classified:            {classified:>8} ({classified*100//total_items if total_items else 0}%)')
+print(f'    By LLM:              {classified_by_llm:>8}')
+print(f'    By heuristic:        {classified_by_heuristic:>8}')
+if classified_unknown > 0:
+    print(f'    Legacy (unknown):    {classified_unknown:>8}  <- classified before method tracking')
 print(f'  Unclassified total:    {unclassified:>8} ({unclassified*100//total_items if total_items else 0}%)')
-print(f'    Pending (never tried):  {pending:>5}  ← only top N% per locale will hit LLM')
-print(f'    Tried, no region:       {tried_no_region:>5}  ← LLM said none, skipped')
+print(f'    Pending (never tried):  {pending:>5}')
+print(f'    Tried, no region:       {tried_no_region:>5}  <- LLM said none, or skipped')
 
-# Per-locale LLM queue calculation for PENDING items only
-from crawler_admin.models import SystemSettings
 print()
-print('  Pending items: per-locale LLM queue (using translation_hot_percent_<locale>):')
+print('  Pending items: per-locale LLM queue:')
 print(f'    {\"Locale\":<8} {\"Pending\":>10} {\"Percent\":>8} {\"LLM Queue\":>10}')
 print('    ' + '-'*40)
-
 pending_by_locale = (
-    TrendItem.objects.filter(content_regions=[], region_classified_at__isnull=True)
-    .values('lang_group')
-    .annotate(c=Count('id'))
-    .order_by('-c')
+    TrendItem.objects
+    .filter(primary_region__isnull=True, region_classified_at__isnull=True)
+    .values('lang_group').annotate(c=Count('id')).order_by('-c')
 )
-
 total_llm = 0
 for row in pending_by_locale:
-    lg = row['lang_group'] or 'unknown'
-    count = row['c']
-    key = f'translation_hot_percent_{lg}'
-    try:
-        pct = SystemSettings.get_setting(key, default=None)
-        if pct is None:
-            pct = SystemSettings.get_setting('translation_hot_percent', default=10)
-        pct = int(pct)
-    except Exception:
-        pct = 10
+    lg = row['lang_group'] or 'unknown'; count = row['c']
+    pct = _hot_pct(lg)
     llm_count = max(1, count * pct // 100) if count > 0 else 0
     total_llm += llm_count
     print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_count:>10}')
-
 print('    ' + '-'*40)
 print(f'    {\"TOTAL\":<8} {pending:>10} {\"\":>8} {total_llm:>10}')
-print(f'    (non-LLM pending items will be marked as tried without LLM call)')
 
-# Top regions by content
 print()
 print('  Top content regions:')
-for r in TrendItem.objects.exclude(primary_region__isnull=True).values('primary_region').annotate(c=Count('id')).order_by('-c')[:10]:
+for r in (TrendItem.objects.filter(primary_region__isnull=False)
+          .values('primary_region').annotate(c=Count('id')).order_by('-c')[:10]):
     print(f'    {r[\"primary_region\"]:<10} {r[\"c\"]:>6}')
 
-# Topic classification queue
+# ── 4. Topic Classification Queue ─────────────────────────────────────────
+# Uses classification_state (db_index=True) instead of topic_tags JSONField.
+# Avoids all JSONField full-table scans.
 print()
 print('--- Topic Classification Queue ---')
-topic_classified = TrendItem.objects.exclude(topic_tags=[]).count()
-topic_unclassified = TrendItem.objects.filter(topic_tags=[]).count()
-topic_pending = TrendItem.objects.filter(
-    topic_tags=[], topic_classified_at__isnull=True
-).count()
-topic_tried_none = TrendItem.objects.filter(
-    topic_tags=[], topic_classified_at__isnull=False
-).count()
+
+state_rows = (
+    TrendItem.objects
+    .values('classification_state', 'classified_by')
+    .annotate(c=Count('id'))
+)
+by_state = {}; by_signal = {}
+for row in state_rows:
+    s = row['classification_state']; b = row['classified_by']; c = row['c']
+    by_state[s] = by_state.get(s, 0) + c
+    if b:
+        by_signal[b] = by_signal.get(b, 0) + c
+
+topic_classified  = by_state.get('heuristic_complete', 0) + by_state.get('llm_complete', 0)
+topic_pending     = by_state.get('pending', 0)
+topic_failed      = by_state.get('failed', 0)
+topic_by_llm      = by_signal.get('llm', 0)
+topic_by_heuristic = topic_classified - topic_by_llm
 
 print(f'  Total items:           {total_items:>8}')
 print(f'  Classified:            {topic_classified:>8} ({topic_classified*100//total_items if total_items else 0}%)')
-print(f'  Unclassified total:    {topic_unclassified:>8} ({topic_unclassified*100//total_items if total_items else 0}%)')
-print(f'    Pending (never tried):  {topic_pending:>5}  ← all go through heuristic first')
-print(f'    Tried, no tags:         {topic_tried_none:>5}  ← heuristic + LLM found no match')
+print(f'    By LLM:              {topic_by_llm:>8}')
+print(f'    By heuristic:        {topic_by_heuristic:>8}')
+print(f'  Pending:               {topic_pending:>8}  <- heuristic pass next cycle')
+print(f'  Failed (no category):  {topic_failed:>8}  <- heuristic + LLM found no match')
 
-# Per-locale LLM budget for pending topic items
-# Heuristic runs on ALL pending items (free). LLM only runs on top N% per locale IF heuristic misses.
-# This shows the worst-case LLM budget (i.e. if heuristic catches 0 of these items).
 print()
 print('  Pending items breakdown:')
-print(f'    All {topic_pending} pending → heuristic pass first (instant, free)')
-print(f'    If heuristic misses → LLM eligible (top N% per locale):')
-h_locale = 'Locale';  h_pending = 'Pending';  h_pct = 'Percent';  h_llm = 'LLM Budget';  h_skip = 'Below threshold'
-print(f'    {h_locale:<8} {h_pending:>10} {h_pct:>8} {h_llm:>12}  {h_skip:>16}')
+h_l='Locale'; h_p='Pending'; h_pc='Percent'; h_lb='LLM Budget'; h_sk='Below threshold'
+print(f'    {h_l:<8} {h_p:>10} {h_pc:>8} {h_lb:>12}  {h_sk:>16}')
 print('    ' + '-'*58)
-
 topic_pending_by_locale = (
-    TrendItem.objects.filter(topic_tags=[], topic_classified_at__isnull=True)
-    .values('lang_group')
-    .annotate(c=Count('id'))
-    .order_by('-c')
+    TrendItem.objects.filter(classification_state='pending')
+    .values('lang_group').annotate(c=Count('id')).order_by('-c')
 )
-
-topic_total_llm = 0
-topic_total_skipped = 0
+topic_total_llm = topic_total_skipped = 0
 for row in topic_pending_by_locale:
-    lg = row['lang_group'] or 'unknown'
-    count = row['c']
-    key = f'translation_hot_percent_{lg}'
-    try:
-        pct = SystemSettings.get_setting(key, default=None)
-        if pct is None:
-            pct = SystemSettings.get_setting('translation_hot_percent', default=10)
-        pct = int(pct)
-    except Exception:
-        pct = 10
+    lg = row['lang_group'] or 'unknown'; count = row['c']
+    pct = _hot_pct(lg)
     llm_budget = max(1, count * pct // 100) if count > 0 else 0
     skipped = count - llm_budget
-    topic_total_llm += llm_budget
-    topic_total_skipped += skipped
+    topic_total_llm += llm_budget; topic_total_skipped += skipped
     print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_budget:>12}  {skipped:>16}')
-
-lbl_total = 'TOTAL';  lbl_empty = ''
 print('    ' + '-'*58)
-print(f'    {lbl_total:<8} {topic_pending:>10} {lbl_empty:>8} {topic_total_llm:>12}  {topic_total_skipped:>16}')
-print('    Note: Below-threshold items are marked tried without LLM (no cost).')
-print('    Actual LLM calls will be less if heuristic catches some budget items.')
+print(f'    {\"TOTAL\":<8} {topic_pending:>10} {\"\":>8} {topic_total_llm:>12}  {topic_total_skipped:>16}')
+print('    Note: below-threshold items are marked tried without LLM (no cost).')
 
-# Top topic tags
+# story_category distribution — one GROUP BY, no JSONField scan
 print()
-print('  Top topic tags (classified items):')
-tagged_items = TrendItem.objects.exclude(topic_tags=[]).values_list('topic_tags', flat=True)
-tag_counts = {}
-for tags in tagged_items:
-    for tag in (tags or []):
-        tag_counts[tag] = tag_counts.get(tag, 0) + 1
-for tag, count in sorted(tag_counts.items(), key=lambda x: -x[1])[:12]:
-    print(f'    {tag:<16} {count:>6}')
+print('  story_category breakdown:')
+cat_rows = (
+    TrendItem.objects
+    .filter(classification_state__in=['heuristic_complete', 'llm_complete'])
+    .values('story_category').annotate(c=Count('id')).order_by('-c')
+)
+for r in cat_rows:
+    cat = r['story_category'] or '(none)'
+    print(f'    {cat:<16} {r[\"c\"]:>6}')
 "
 }
 

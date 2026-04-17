@@ -9,8 +9,8 @@ Implements the classification state machine per class.txt design:
     │
     └─ category found (classified_by ∈ {bucket, platform, keyword, locale, surface})
          ├─ tier=high/medium (bucket, platform, keyword) → heuristic_complete
-         ├─ tier=low AND NOT high-hotness              → heuristic_complete
-         └─ tier=low AND high-hotness                  → LLM attempt
+         ├─ tier=low AND NOT high-hotness AND NOT platform-top → heuristic_complete
+         └─ tier=low AND (high-hotness OR platform-top)      → LLM attempt
               ├─ LLM finds category → llm_complete
               └─ LLM fails         → heuristic_complete (heuristic result preserved)
 
@@ -115,7 +115,6 @@ def _is_high_hotness(item) -> bool:
     if item.hotness is None:
         return False
     # threshold is a percentile cutoff — we use it as a minimum score floor
-    # (same semantics as translation_worker's _filter_top_percent_per_locale)
     return item.hotness >= threshold
 
 
@@ -126,19 +125,28 @@ def _confidence_tier(classified_by: str | None) -> str:
     return _CONFIDENCE_TIER.get(classified_by, 'none')
 
 
-def _is_llm_eligible(classified_by: str | None, item) -> bool:
+def _is_llm_eligible(
+    classified_by: str | None,
+    item,
+    platform_top_k_ids: set[int] | None = None,
+) -> bool:
     """
     Determine LLM eligibility based on confidence tier.
 
     tier=none  → eligible unconditionally (no heuristic result)
-    tier=low   → eligible if item is high-hotness (locale/surface signals)
+    tier=low   → eligible if item meets global high-hotness threshold OR is in
+                 the top-K for its platform (platform_top_k_ids)
     tier=high/medium → not eligible
     """
     tier = _confidence_tier(classified_by)
     if tier == 'none':
         return True
     if tier == 'low':
-        return _is_high_hotness(item)
+        if _is_high_hotness(item):
+            return True
+        if platform_top_k_ids and item.id in platform_top_k_ids:
+            return True
+        return False
     return False
 
 
@@ -168,15 +176,63 @@ def requeue_stale_items(current_version: str) -> int:
     return count
 
 
-def get_pending_items(limit: int = 5000) -> list:
-    """Get items where classification_state='pending', ordered by hotness desc."""
-    return list(
-        TrendItem.objects.filter(
-            classification_state='pending',
-        )
-        .select_related('surface', 'region')
-        .order_by('-hotness')[:limit]
+def get_pending_items(per_platform: int | None = None) -> list:
+    """
+    Fetch top N pending items per platform, ordered by hotness desc.
+
+    Uses topic_per_platform_limit SystemSetting (default 200) so every platform
+    contributes proportionally — prevents high-volume platforms (YouTube, Bilibili)
+    from crowding out niche platforms (HN, devto, paperswithcode) in the LLM queue.
+    """
+    if per_platform is None:
+        try:
+            per_platform = int(
+                SystemSettings.get_setting('topic_per_platform_limit', default=200)
+            )
+        except Exception:
+            per_platform = 200
+
+    platforms = (
+        TrendItem.objects
+        .filter(classification_state='pending')
+        .values_list('surface__platform', flat=True)
+        .distinct()
     )
+
+    result = []
+    for platform in platforms:
+        items = list(
+            TrendItem.objects
+            .filter(classification_state='pending', surface__platform=platform)
+            .select_related('surface', 'region')
+            .order_by('-hotness')[:per_platform]
+        )
+        result.extend(items)
+
+    result.sort(key=lambda x: x.hotness or 0, reverse=True)
+    return result
+
+
+def _compute_platform_top_k(items: list, k: int) -> set[int]:
+    """
+    Return item IDs that are in the top-K by hotness within their own platform.
+
+    Used to promote niche-platform items into LLM eligibility even when they fall
+    below the global hotness threshold — mirrors story_engine's per-platform top-K
+    windowing logic.
+    """
+    from collections import defaultdict
+    by_platform: dict[str, list] = defaultdict(list)
+    for item in items:
+        platform = item.surface.platform if item.surface else 'unknown'
+        by_platform[platform].append(item)
+
+    top_k_ids: set[int] = set()
+    for group in by_platform.values():
+        group.sort(key=lambda x: x.hotness or 0, reverse=True)
+        for item in group[:k]:
+            top_k_ids.add(item.id)
+    return top_k_ids
 
 
 def run_once(current_version: str) -> None:
@@ -201,6 +257,20 @@ def run_once(current_version: str) -> None:
             logger.info("topic_llm_classifier not available — LLM pass disabled")
             enable_llm = False
 
+    # Compute platform-top-K set for LLM eligibility promotion.
+    # Items in the top-K of their platform bypass the global hotness threshold
+    # so niche platforms (HN, devto, paperswithcode) get LLM coverage.
+    try:
+        llm_top_k = int(
+            SystemSettings.get_setting('topic_llm_top_k_per_platform', default=50)
+        )
+    except Exception:
+        llm_top_k = 50
+    platform_top_k_ids = _compute_platform_top_k(items, llm_top_k)
+    logger.info(
+        f"Platform top-K: k={llm_top_k}, eligible_ids={len(platform_top_k_ids)}"
+    )
+
     # Buckets for bulk updates
     heuristic_complete: list = []
     needs_llm: list[tuple] = []   # (item, heuristic_cat, heuristic_signal) or (item, None, None)
@@ -219,8 +289,8 @@ def run_once(current_version: str) -> None:
 
         if cat:
             # Category found — check LLM eligibility via confidence tier
-            if not _is_llm_eligible(signal, item):
-                # tier=high/medium, or tier=low + not high-hotness → heuristic_complete
+            if not _is_llm_eligible(signal, item, platform_top_k_ids):
+                # tier=high/medium, or tier=low + not high-hotness + not platform-top → heuristic_complete
                 item.story_category = cat
                 item.classified_by = signal
                 item.classification_state = 'heuristic_complete'
@@ -228,7 +298,7 @@ def run_once(current_version: str) -> None:
                 item.topic_classified_at = now
                 heuristic_complete.append(item)
             else:
-                # tier=low AND high-hotness → attempt LLM improvement
+                # tier=low AND (high-hotness OR platform-top) → attempt LLM improvement
                 if enable_llm:
                     needs_llm.append((item, cat, signal))
                 else:
