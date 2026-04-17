@@ -15,6 +15,7 @@ Product constraint (from /tmp/t9):
 - Translation NEVER blocks collection
 """
 
+import gc
 import os
 import sys
 import time
@@ -35,6 +36,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries
 from crawler_admin.models import TrendSurface, TrendItem, CrawlRun
 from crawler_api.surfaces.registry import get_collector
 from shared.language_detection import classify_item_language
@@ -386,6 +388,12 @@ async def run_worker_loop():
         except Exception as e:
             # Never crash the worker loop
             logger.error(f"Worker loop error: {e}", exc_info=True)
+        finally:
+            # Release Django ORM objects and DB connection state — same fix as
+            # region/topic classifier workers (2026-04-17 OOM kill).
+            await sync_to_async(close_old_connections)()
+            await sync_to_async(reset_queries)()
+            gc.collect()
 
         # Sleep before next poll with jitter to avoid thundering herd
         await jittered_sleep(SURFACE_WORKER_POLL_INTERVAL)

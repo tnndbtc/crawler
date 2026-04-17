@@ -26,6 +26,7 @@ Usage:
     python src/crawler_api/workers/hotness_worker.py
 """
 
+import gc
 import os
 import sys
 import asyncio
@@ -42,6 +43,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries
 from crawler_admin.models import TrendItem, SystemSettings
 from shared.hotness import compute_hotness, should_recompute_hotness
 
@@ -362,6 +364,12 @@ async def run_worker_loop():
 
                 # In aggressive mode, loop until backlog < 100
                 if BACKFILL_MODE == 'aggressive':
+                    # Release ORM objects between aggressive-mode inner iterations —
+                    # same fix as region/topic classifier workers (2026-04-17 OOM kill).
+                    await sync_to_async(close_old_connections)()
+                    await sync_to_async(reset_queries)()
+                    gc.collect()
+
                     stats = await get_hotness_stats()
                     remaining = stats['items_need_lang_backfill']
 
@@ -391,6 +399,11 @@ async def run_worker_loop():
 
                 # In aggressive mode, loop until backlog < 100
                 if BACKFILL_MODE == 'aggressive':
+                    # Release ORM objects between aggressive-mode inner iterations.
+                    await sync_to_async(close_old_connections)()
+                    await sync_to_async(reset_queries)()
+                    gc.collect()
+
                     stats = await get_hotness_stats()
                     remaining = stats['items_need_hotness_backfill']
 
@@ -454,6 +467,12 @@ async def run_worker_loop():
         except Exception as e:
             # Never crash the worker loop
             logger.error(f"Worker loop error: {e}", exc_info=True)
+        finally:
+            # Release Django ORM objects and DB connection state — same fix as
+            # region/topic classifier workers (2026-04-17 OOM kill).
+            await sync_to_async(close_old_connections)()
+            await sync_to_async(reset_queries)()
+            gc.collect()
 
         # Sleep before next poll
         await asyncio.sleep(HOTNESS_WORKER_POLL_INTERVAL)

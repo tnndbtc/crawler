@@ -30,6 +30,7 @@ Configuration (env vars):
 """
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries  # noqa: E402
 from crawler_admin.models import TrendItem, ItemDerivation  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -133,7 +135,9 @@ def _items_needing_embedding(last_id: int, limit: int) -> List[TrendItem]:
         .filter(id__gt=last_id)
         .exclude(derivations__derivation_type=DERIVATION_TYPE)
         .order_by('id')
-        .select_related()
+        # No select_related — embedding builder only reads local fields
+        # (canonical_title, canonical_description, raw_payload).
+        .only('id', 'canonical_title', 'canonical_description', 'raw_payload')
         [:limit]
     )
 
@@ -260,8 +264,16 @@ async def run_backfill() -> int:
             f"(total {total_saved}, last_id={last_id})"
         )
 
-        # Yield to the event loop between batches so other coroutines can run
-        await asyncio.sleep(0)
+        # Release ORM objects accumulated during this batch — same fix as
+        # region/topic classifier workers (2026-04-17 OOM kill).
+        await sync_to_async(close_old_connections)()
+        await sync_to_async(reset_queries)()
+        gc.collect()
+
+        # Brief pause between batches so other workers (surface, hotness, etc.)
+        # can breathe. asyncio.sleep(0) only yields to the event loop without
+        # any real delay, which causes continuous CPU saturation during backfill.
+        await asyncio.sleep(1)
 
     logger.info(f"Backfill complete — {total_saved} embeddings created")
     return total_saved
@@ -338,6 +350,12 @@ async def run_worker_loop():
             await run_ongoing()
         except Exception as e:
             logger.error(f"Ongoing embedding error: {e}", exc_info=True)
+        finally:
+            # Release Django ORM objects and DB connection state — same fix as
+            # region/topic classifier workers (2026-04-17 OOM kill).
+            await sync_to_async(close_old_connections)()
+            await sync_to_async(reset_queries)()
+            gc.collect()
 
         await asyncio.sleep(POLL_INTERVAL)
 

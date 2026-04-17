@@ -19,6 +19,7 @@ Architecture mirrors translation_worker.py:
 """
 
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -36,6 +37,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries
 from crawler_admin.models import TrendItem
 
 logger = logging.getLogger(__name__)
@@ -490,6 +492,12 @@ async def run_worker_loop():
                 logger.info(f"Cycle complete: summarized {count} item(s)")
         except Exception as e:
             logger.error(f"Worker loop error: {e}", exc_info=True)
+        finally:
+            # Release Django ORM objects and DB connection state — same fix as
+            # region/topic classifier workers (2026-04-17 OOM kill).
+            await sync_to_async(close_old_connections)()
+            await sync_to_async(reset_queries)()
+            gc.collect()
 
         await asyncio.sleep(POLL_INTERVAL)
 

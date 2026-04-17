@@ -152,18 +152,45 @@ def _is_llm_eligible(
     return False
 
 
+def _get_stored_classifier_version() -> str:
+    """Read the last persisted classifier version from SystemSettings."""
+    try:
+        val = SystemSettings.get_setting('topic_classifier_version', default='')
+        return str(val) if val is not None else ''
+    except Exception:
+        return ''
+
+
+def _save_classifier_version(version: str) -> None:
+    """Persist the current classifier version to SystemSettings."""
+    try:
+        SystemSettings.objects.update_or_create(
+            key='topic_classifier_version',
+            defaults={
+                'value_json': version,
+                'description': 'Last applied topic classifier version (TAXONOMY_VERSION:keywords_sha)',
+            },
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist classifier version: {e}")
+
+
 def requeue_stale_items(current_version: str) -> int:
     """
     Reset classification_state to 'pending' for all non-LLM items where
-    classification_version != current_version.
+    classification_version != current_version AND are not already pending.
 
     LLM items are exempt — their classifications are authoritative.
+    Items already in 'pending' are skipped — no point resetting what is
+    already pending (and avoids touching rows that have never been classified).
     Returns count of items re-queued.
     """
     count = TrendItem.objects.exclude(
         classification_version=current_version,
     ).exclude(
         classified_by='llm',
+    ).exclude(
+        classification_state='pending',
     ).update(
         classification_state='pending',
         story_category=None,
@@ -419,10 +446,21 @@ def run_worker_loop():
     logger.info("Topic classifier worker started")
     logger.info(f"POLL_INTERVAL={POLL_INTERVAL}s, TAXONOMY_VERSION={TAXONOMY_VERSION}")
 
-    # Compute initial version and re-queue stale items on startup
+    # Compute initial version.
+    # Only re-queue stale items if the version changed since last run — this avoids
+    # a full-table UPDATE on every restart (which created a massive SQLite WAL entry
+    # when classification_version was first introduced and all rows had NULL).
     current_version = _get_current_version()
-    logger.info(f"Startup: current_version={current_version}")
-    requeue_stale_items(current_version)
+    stored_version = _get_stored_classifier_version()
+    logger.info(
+        f"Startup: current_version={current_version}, stored_version={stored_version!r}"
+    )
+    if stored_version != current_version:
+        logger.info("Version changed — re-queuing stale items")
+        requeue_stale_items(current_version)
+        _save_classifier_version(current_version)
+    else:
+        logger.info("Version unchanged — skipping requeue (no WAL write needed)")
 
     while True:
         try:
@@ -431,6 +469,7 @@ def run_worker_loop():
                 current_version = _get_current_version()
                 logger.info(f"Keywords reloaded: new current_version={current_version}")
                 requeue_stale_items(current_version)
+                _save_classifier_version(current_version)
 
             run_once(current_version)
         except Exception as e:

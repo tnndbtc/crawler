@@ -84,59 +84,32 @@ ensure_directories() {
     mkdir -p "$PID_DIR" "$LOG_DIR" "$BACKUP_DIR"
 }
 
-# Check if a service is running (PID file first, then actual process check)
-is_service_running() {
-    local service_name="$1"
-    local pid_file="${PID_DIR}/${service_name}.pid"
-
-    # Check PID file first
-    if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            return 0  # Running
-        else
-            # Stale PID file
-            rm -f "$pid_file"
-        fi
-    fi
-
-    # Fallback: check actual process regardless of PID file
-    local process_pid=""
-    case "$service_name" in
-        django_admin)
-            process_pid=$(ps aux | grep "manage.py runserver" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        api_server)
-            process_pid=$(ps aux | grep "uvicorn.*crawler_api" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        translation_worker)
-            process_pid=$(ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        surface_worker)
-            process_pid=$(ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        hotness_worker)
-            process_pid=$(ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        summarization_worker)
-            process_pid=$(ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        region_classifier_worker)
-            process_pid=$(ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        embedding_worker)
-            process_pid=$(ps aux | grep "python.*embedding_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
-        topic_classifier_worker)
-            process_pid=$(ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}')
-            ;;
+# Return the pgrep/pkill -f pattern for a service.
+# This is the single source of truth — used by is_service_running,
+# get_service_pid, and stop_service. Works regardless of who started
+# the process (setup.sh, Claude agent, cron, manual run).
+_process_pattern() {
+    case "$1" in
+        django_admin)             echo "manage.py runserver" ;;
+        api_server)               echo "uvicorn.*crawler_api" ;;
+        surface_worker)           echo "python.*surface_worker\.py" ;;
+        translation_worker)       echo "python.*translation_worker\.py" ;;
+        hotness_worker)           echo "python.*hotness_worker\.py" ;;
+        summarization_worker)     echo "python.*summarization_worker\.py" ;;
+        region_classifier_worker) echo "python.*region_classifier_worker\.py" ;;
+        topic_classifier_worker)  echo "python.*topic_classifier_worker\.py" ;;
+        embedding_worker)         echo "python.*embedding_worker\.py" ;;
+        *)                        echo "" ;;
     esac
+}
 
-    if [ ! -z "$process_pid" ]; then
-        return 0  # Running
-    fi
-
-    return 1  # Not running
+# Check if a service is running — uses process name, not PID file.
+# Works regardless of who started the process.
+is_service_running() {
+    local pattern
+    pattern=$(_process_pattern "$1")
+    [ -z "$pattern" ] && return 1
+    pgrep -f "$pattern" > /dev/null 2>&1
 }
 
 # Check if port is in use
@@ -148,53 +121,12 @@ is_port_in_use() {
     return 1  # Port free
 }
 
-# Get PID for a service (PID file first, then actual process)
+# Get PID(s) for a service — returns the first live PID for status display.
 get_service_pid() {
-    local service_name="$1"
-    local pid_file="${PID_DIR}/${service_name}.pid"
-
-    # Check PID file first
-    if [ -f "$pid_file" ]; then
-        local pid=$(cat "$pid_file")
-        if ps -p "$pid" > /dev/null 2>&1; then
-            echo "$pid"
-            return
-        fi
-    fi
-
-    # Fallback: find actual process
-    case "$service_name" in
-        django_admin)
-            ps aux | grep "manage.py runserver" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        api_server)
-            ps aux | grep "uvicorn.*crawler_api" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        translation_worker)
-            ps aux | grep "python.*translation_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        surface_worker)
-            ps aux | grep "python.*surface_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        hotness_worker)
-            ps aux | grep "python.*hotness_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        summarization_worker)
-            ps aux | grep "python.*summarization_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        region_classifier_worker)
-            ps aux | grep "python.*region_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        embedding_worker)
-            ps aux | grep "python.*embedding_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        topic_classifier_worker)
-            ps aux | grep "python.*topic_classifier_worker\.py" | grep -v grep | head -1 | awk '{print $2}'
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
+    local pattern
+    pattern=$(_process_pattern "$1")
+    [ -z "$pattern" ] && return
+    pgrep -f "$pattern" | head -1
 }
 
 ################################################################################
@@ -352,72 +284,27 @@ stop_service() {
     local pid_file="${PID_DIR}/${service_name}.pid"
     local log_file="${LOG_DIR}/${service_name}.log"
 
-    if ! is_service_running "$service_name"; then
+    local pattern
+    pattern=$(_process_pattern "$service_name")
+
+    if ! pgrep -f "$pattern" > /dev/null 2>&1; then
         print_info "$service_description is not running"
         rm -f "$pid_file"
         return 0
     fi
 
-    # Find ALL pids for this service (python worker, bash wrapper, tee)
-    local all_pids=""
-    case "$service_name" in
-        django_admin)
-            all_pids=$(ps aux | grep "manage.py runserver" | grep -v grep | awk '{print $2}')
-            ;;
-        api_server)
-            all_pids=$(ps aux | grep "uvicorn.*crawler_api" | grep -v grep | awk '{print $2}')
-            ;;
-        translation_worker)
-            all_pids=$(ps aux | grep -E "translation_worker\.(py|sh)|tee.*translation_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        surface_worker)
-            all_pids=$(ps aux | grep -E "surface_worker\.(py|sh)|tee.*surface_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        hotness_worker)
-            all_pids=$(ps aux | grep -E "hotness_worker\.(py|sh)|tee.*hotness_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        summarization_worker)
-            all_pids=$(ps aux | grep -E "summarization_worker\.(py|sh)|tee.*summarization_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        region_classifier_worker)
-            all_pids=$(ps aux | grep -E "region_classifier_worker\.(py|sh)|tee.*region_classifier_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        embedding_worker)
-            all_pids=$(ps aux | grep -E "embedding_worker\.(py|sh)|tee.*embedding_worker" | grep -v grep | awk '{print $2}')
-            ;;
-        topic_classifier_worker)
-            all_pids=$(ps aux | grep -E "topic_classifier_worker\.(py|sh)|tee.*topic_classifier_worker" | grep -v grep | awk '{print $2}')
-            ;;
-    esac
-
-    # Also include PID file pid
-    if [ -f "$pid_file" ]; then
-        local file_pid=$(cat "$pid_file")
-        all_pids="$file_pid $all_pids"
-    fi
-
-    # Deduplicate
-    all_pids=$(echo "$all_pids" | tr ' ' '\n' | sort -u | tr '\n' ' ')
-
+    local all_pids
+    all_pids=$(pgrep -f "$pattern" | tr '\n' ' ')
     print_step "Stopping $service_description (PIDs: $all_pids)..."
     echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] === Stopping $service_description (PIDs: $all_pids) ===" >> "$log_file"
 
-    # Try graceful shutdown first
-    for pid in $all_pids; do
-        kill $pid 2>/dev/null || true
-    done
+    # Graceful shutdown — kill the actual process(es) by name, not the bash wrapper
+    pkill -TERM -f "$pattern" 2>/dev/null || true
 
-    # Wait up to 10 seconds for graceful shutdown
-    local still_running=false
+    # Wait up to 10 seconds
+    local i
     for i in {1..10}; do
-        still_running=false
-        for pid in $all_pids; do
-            if ps -p $pid > /dev/null 2>&1; then
-                still_running=true
-                break
-            fi
-        done
-        if [ "$still_running" = false ]; then
+        if ! pgrep -f "$pattern" > /dev/null 2>&1; then
             rm -f "$pid_file"
             print_success "$service_description stopped"
             return 0
@@ -427,9 +314,7 @@ stop_service() {
 
     # Force kill if still running
     print_warning "Forcing shutdown..."
-    for pid in $all_pids; do
-        kill -9 $pid 2>/dev/null || true
-    done
+    pkill -KILL -f "$pattern" 2>/dev/null || true
     rm -f "$pid_file"
     print_success "$service_description stopped (forced)"
 }
@@ -583,21 +468,23 @@ stop_all_services() {
     stop_service "api_server" "FastAPI Server"
     stop_service "django_admin" "Django Admin Server"
 
-    # Step 2: Kill any remaining worker processes by pattern
+    # Step 2: Kill any remaining worker or run-script processes by name.
+    # Covers processes started outside setup.sh (Claude agent, cron, manual).
     print_step "Checking for untracked worker processes..."
 
-    # Find ALL Python worker processes (scripts and actual workers)
-    local worker_pids=$(ps aux | grep -E "(translation_worker\.py|surface_worker\.py|hotness_worker\.py|embedding_worker\.py|run_.*_worker\.sh)" | grep -v grep | awk '{print $2}')
+    local untracked_pids
+    untracked_pids=$(pgrep -f "python.*(surface|translation|hotness|summarization|region_classifier|topic_classifier|embedding)_worker\.py" 2>/dev/null || true)
+    untracked_pids+=" $(pgrep -f "run_.*_worker\.sh" 2>/dev/null || true)"
+    untracked_pids=$(echo "$untracked_pids" | tr ' ' '\n' | sort -u | grep -v '^$' | tr '\n' ' ')
 
-    if [ ! -z "$worker_pids" ]; then
-        print_warning "Found untracked worker processes, stopping them..."
-        echo "$worker_pids" | while read pid; do
-            if [ ! -z "$pid" ]; then
-                print_info "  Killing process $pid"
-                kill $pid 2>/dev/null || kill -9 $pid 2>/dev/null
-            fi
-        done
-        sleep 1
+    if [ -n "$untracked_pids" ]; then
+        print_warning "Found untracked worker processes (PIDs: $untracked_pids), stopping them..."
+        pkill -TERM -f "python.*(surface|translation|hotness|summarization|region_classifier|topic_classifier|embedding)_worker\.py" 2>/dev/null || true
+        pkill -TERM -f "run_.*_worker\.sh" 2>/dev/null || true
+        sleep 2
+        # Force-kill anything still alive
+        pkill -KILL -f "python.*(surface|translation|hotness|summarization|region_classifier|topic_classifier|embedding)_worker\.py" 2>/dev/null || true
+        pkill -KILL -f "run_.*_worker\.sh" 2>/dev/null || true
     else
         print_info "No untracked workers found"
     fi
