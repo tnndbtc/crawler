@@ -259,7 +259,7 @@ class TrendItem(models.Model):
         help_text="Surface that collected this item"
     )
     external_id = models.CharField(
-        max_length=255,
+        max_length=2048,
         null=True,
         blank=True,
         help_text="Platform's unique ID (for reference)"
@@ -804,8 +804,8 @@ class ItemDerivation(models.Model):
 
     # Metadata
     engine = models.CharField(
-        max_length=20,
-        help_text="Engine/provider used (e.g., 'claude')"
+        max_length=100,
+        help_text="Engine/provider used (e.g., 'claude', 'BAAI/bge-small-en-v1.5')"
     )
     status = models.CharField(
         max_length=20,

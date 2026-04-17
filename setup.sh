@@ -1058,6 +1058,186 @@ run_migrations() {
     echo ""
 }
 
+install_postgresql() {
+    print_header "Install & Initialize PostgreSQL 17"
+
+    # ── Step 1: Install PostgreSQL 17 (skip if already installed) ────────────
+    if dpkg -l postgresql-17 2>/dev/null | grep -q "^ii"; then
+        print_success "PostgreSQL 17 already installed — skipping installation"
+    else
+        print_step "Step 1: Adding PostgreSQL 17 PGDG apt repository..."
+        sudo apt-get install -y curl ca-certificates gnupg 2>&1 | tail -1
+
+        sudo install -d /usr/share/postgresql-common/pgdg
+        sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+        . /etc/os-release
+        echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+
+        sudo apt-get update -qq
+
+        print_step "Step 2: Installing postgresql-17..."
+        sudo apt-get install -y postgresql-17
+        if [ $? -ne 0 ]; then
+            print_error "Failed to install PostgreSQL 17"
+            return 1
+        fi
+        print_success "PostgreSQL 17 installed"
+    fi
+
+    # ── Step 2: Ensure service is running ────────────────────────────────────
+    print_step "Enabling and starting PostgreSQL service..."
+    sudo systemctl enable postgresql
+    sudo systemctl start postgresql
+    if ! sudo systemctl is-active --quiet postgresql; then
+        print_error "PostgreSQL service failed to start — check: sudo journalctl -u postgresql"
+        return 1
+    fi
+    print_success "PostgreSQL service is running"
+
+    # ── Step 3: Collect DB username and password ──────────────────────────────
+    echo ""
+    print_info "Database: crawler_db"
+    echo ""
+    local db_user db_password db_password_confirm
+    read -p "DB username [dbuser]: " db_user
+    db_user="${db_user:-dbuser}"
+    print_info "Using DB user: ${db_user}"
+    echo ""
+    while true; do
+        read -s -p "Enter password for PostgreSQL user '${db_user}': " db_password
+        echo ""
+        read -s -p "Confirm password: " db_password_confirm
+        echo ""
+        if [ "$db_password" = "$db_password_confirm" ]; then
+            break
+        fi
+        print_error "Passwords do not match. Please try again."
+        echo ""
+    done
+
+    # ── Step 4: Create role and database ─────────────────────────────────────
+    print_step "Creating PostgreSQL role '${db_user}' and database 'crawler_db'..."
+    # SQL-escape single quotes in password: ' → ''
+    local escaped_pw="${db_password//\'/\'\'}"
+
+    # 4a. Create or update the role (piped via stdin — no temp file, no permission issues).
+    sudo -u postgres psql <<SQLEOF
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN
+        CREATE USER ${db_user} WITH PASSWORD '${escaped_pw}';
+    ELSE
+        ALTER USER ${db_user} WITH PASSWORD '${escaped_pw}';
+    END IF;
+END
+\$\$;
+SQLEOF
+    if [ $? -ne 0 ]; then
+        print_error "Failed to create PostgreSQL role '${db_user}'"
+        return 1
+    fi
+
+    # 4b. Create database if it doesn't already exist.
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'crawler_db'" | grep -q 1; then
+        sudo -u postgres createdb -O "${db_user}" crawler_db
+        if [ $? -ne 0 ]; then
+            print_error "Failed to create database 'crawler_db'"
+            return 1
+        fi
+    else
+        print_info "Database 'crawler_db' already exists — skipping creation"
+    fi
+
+    # 4c. Grant privileges.
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE crawler_db TO ${db_user};"
+
+    print_success "Role '${db_user}' and database 'crawler_db' ready"
+
+    # ── Step 5: Write DATABASE_URL to .env ───────────────────────────────────
+    print_step "Writing DATABASE_URL to .env..."
+    local database_url="postgres://${db_user}:${db_password}@localhost:5432/crawler_db"
+    if [ -f "$ENV_FILE" ]; then
+        sed -i '/^DATABASE_URL=/d' "$ENV_FILE"
+    fi
+    echo "DATABASE_URL=${database_url}" >> "$ENV_FILE"
+    # Reload .env so subsequent python3 calls pick up the new DATABASE_URL
+    set -a
+    source "$ENV_FILE"
+    set +a
+    print_success "DATABASE_URL written to .env"
+
+    # ── Step 6: Run Django migrations ────────────────────────────────────────
+    print_step "Step 6: Running database migrations..."
+    cd "$SCRIPT_DIR"
+    python3 manage.py migrate
+    if [ $? -ne 0 ]; then
+        print_error "Migration failed — check errors above"
+        return 1
+    fi
+    print_success "Migrations applied"
+
+    # ── Step 7: Create Django superuser if none exists ───────────────────────
+    print_step "Step 7: Checking for Django superuser..."
+    local superuser_count
+    superuser_count=$(python3 -c "
+import os, sys
+sys.path.insert(0, 'src')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
+import django; django.setup()
+from django.contrib.auth.models import User
+print(User.objects.filter(is_superuser=True).count())
+" 2>/dev/null)
+
+    if [ "${superuser_count:-0}" -gt "0" ]; then
+        print_success "Django superuser already exists — skipping"
+    else
+        print_info "No superuser found. Creating Django superuser..."
+        echo ""
+        local admin_username admin_password admin_password_confirm
+        read -p "Django admin username [admin]: " admin_username
+        admin_username="${admin_username:-admin}"
+        print_info "Using Django admin username: ${admin_username}"
+        echo ""
+        while true; do
+            read -s -p "Enter password for Django admin '${admin_username}': " admin_password
+            echo ""
+            read -s -p "Confirm password: " admin_password_confirm
+            echo ""
+            if [ "$admin_password" = "$admin_password_confirm" ]; then
+                break
+            fi
+            print_error "Passwords do not match. Please try again."
+            echo ""
+        done
+
+        # Use Django's --noinput mechanism with env vars — handles special
+        # characters safely without embedding the password in a shell command.
+        DJANGO_SUPERUSER_USERNAME="$admin_username" \
+        DJANGO_SUPERUSER_EMAIL="${admin_username}@localhost" \
+        DJANGO_SUPERUSER_PASSWORD="$admin_password" \
+        python3 manage.py createsuperuser --noinput 2>/dev/null
+
+        if [ $? -eq 0 ]; then
+            print_success "Django superuser '${admin_username}' created"
+        else
+            print_error "Failed to create superuser — run option 14 manually to retry"
+        fi
+    fi
+
+    echo ""
+    print_success "PostgreSQL 17 setup complete!"
+    echo ""
+    print_info "  Database : crawler_db"
+    print_info "  User     : ${db_user}"
+    print_info "  Host     : localhost:5432"
+    print_info "  .env     : DATABASE_URL updated"
+    echo ""
+}
+
 create_db_user() {
     print_header "Create DB User"
 
@@ -1840,6 +2020,7 @@ EOF
     echo "  12) Restore Database"
     echo "  13) Reset Database (destructive!)"
     echo "  14) Create DB User"
+    echo "  16) Install & Initialize PostgreSQL 17"
     echo ""
 
     echo -e "${BOLD}Testing:${NC}"
@@ -1872,6 +2053,7 @@ main_loop() {
             13) reset_database ;;
             14) create_db_user ;;
             15) test_menu ;;
+            16) install_postgresql ;;
             0)
                 echo ""
                 print_info "Exiting..."
