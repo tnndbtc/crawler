@@ -32,12 +32,14 @@ import os
 import sys
 import time
 import logging
+import gc
 
 import django
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries
 from django.utils import timezone
 from crawler_admin.models import TrendItem, SystemSettings
 from shared.topic_classifier import (
@@ -433,6 +435,22 @@ def run_worker_loop():
             run_once(current_version)
         except Exception as e:
             logger.error(f"Topic classification cycle error: {e}", exc_info=True)
+        finally:
+            # Release Django ORM objects and DB connection state accumulated during
+            # this cycle. Without this, select_related() fetches across hundreds of
+            # TrendItems grow the process RSS by ~100–300 MB per cycle — over 15+
+            # cycles this caused a 9 GB OOM kill on 2026-04-17.
+            #
+            # close_old_connections(): closes the DB connection so the next cycle
+            #   gets a fresh one, clearing Django's per-connection query cache and
+            #   any internal ORM state pinned to the connection object.
+            # reset_queries(): clears django.db.connection.queries (only non-empty
+            #   when DEBUG=True, but cheap to call regardless).
+            # gc.collect(): releases any ORM objects the Python GC missed due to
+            #   reference cycles in Django model instances.
+            close_old_connections()
+            reset_queries()
+            gc.collect()
 
         time.sleep(POLL_INTERVAL)
 

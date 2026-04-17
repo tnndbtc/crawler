@@ -7,6 +7,7 @@ Polls every 10 minutes for unclassified items (content_regions = []).
 Enable/disable via ENABLE_REGION_CLASSIFIER in .env.
 """
 
+import gc
 import os
 import sys
 import time
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
+from django.db import close_old_connections, reset_queries
 from django.utils import timezone
 from crawler_admin.models import SystemSettings, TrendItem
 from shared.region_classifier import classify_content_regions
@@ -244,6 +246,10 @@ def run_worker_loop():
             run_once()
         except Exception as e:
             logger.error(f"Classification cycle error: {e}", exc_info=True)
+        finally:
+            close_old_connections()
+            reset_queries()
+            gc.collect()
 
         time.sleep(POLL_INTERVAL)
 
