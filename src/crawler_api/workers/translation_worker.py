@@ -100,7 +100,9 @@ async def process_canonical_translations(manager: TranslationManager, batch_size
             summary_status__in=['complete', 'skipped'],  # Wait for summarization first
         ).exclude(
             original_locale__startswith='en-'
-        ).select_related('region', 'surface')[:batch_size]
+        ).select_related('region', 'surface').defer(
+            'raw_payload', 'engagement_signals',
+        )[:batch_size]
     )
 
     if not items_need_canonical:
@@ -222,7 +224,9 @@ async def process_display_translations(
     items_need_display = await sync_to_async(list)(
         TrendItem.objects.filter(**filter_kwargs)
         .exclude(original_locale=target_locale)  # Skip if already native
-        .select_related('region', 'surface')[:batch_size]
+        .select_related('region', 'surface').defer(
+            'raw_payload', 'engagement_signals',
+        )[:batch_size]
     )
 
     if not items_need_display:

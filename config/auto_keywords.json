@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-18T05:00:14Z",
+  "generated_at": "2026-04-18T06:00:15Z",
   "keywords": {
     "business": [
       {
@@ -6841,6 +6841,12 @@
         "score": 8
       },
       {
+        "term": "主委",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "主橋",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -6880,7 +6886,7 @@
         "term": "伊朗",
         "lang": "zh",
         "last_seen": "2026-04-18",
-        "score": 98
+        "score": 100
       },
       {
         "term": "伊美",
@@ -6950,6 +6956,12 @@
       },
       {
         "term": "可能性",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "台灣",
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 2
@@ -7180,7 +7192,7 @@
         "term": "民進黨",
         "lang": "zh",
         "last_seen": "2026-04-18",
-        "score": 3
+        "score": 5
       },
       {
         "term": "決議",
@@ -7370,6 +7382,12 @@
       },
       {
         "term": "西藏",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "議員",
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 2
@@ -7598,6 +7616,12 @@
       },
       {
         "term": "결심",
+        "lang": "ko",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "경향신문",
         "lang": "ko",
         "last_seen": "2026-04-18",
         "score": 2
@@ -8086,7 +8110,7 @@
         "term": "이란",
         "lang": "ko",
         "last_seen": "2026-04-18",
-        "score": 40
+        "score": 42
       },
       {
         "term": "이란서",
@@ -8326,7 +8350,7 @@
         "term": "트럼프",
         "lang": "ko",
         "last_seen": "2026-04-18",
-        "score": 24
+        "score": 26
       },
       {
         "term": "특검",
@@ -8393,6 +8417,12 @@
         "lang": "ko",
         "last_seen": "2026-04-18",
         "score": 11
+      },
+      {
+        "term": "합의",
+        "lang": "ko",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "해상",
@@ -10115,6 +10145,12 @@
         "score": 2
       },
       {
+        "term": "全身",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "全额",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -10131,6 +10167,12 @@
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 2
+      },
+      {
+        "term": "冰淇淋",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 3
       },
       {
         "term": "减肥法",
@@ -10257,6 +10299,12 @@
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 3
+      },
+      {
+        "term": "嘴巴",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "四肢",
@@ -10679,6 +10727,12 @@
         "score": 2
       },
       {
+        "term": "正妹",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "母亲",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -10713,6 +10767,12 @@
         "lang": "zh",
         "last_seen": "2026-04-14",
         "score": 1
+      },
+      {
+        "term": "水節",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "汉堡",

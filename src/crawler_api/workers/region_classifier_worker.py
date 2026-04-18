@@ -75,10 +75,13 @@ def get_unclassified_items(per_platform: int | None = None) -> list:
             )
             .select_related('surface', 'region')
             # Defer large fields not needed for region classification to prevent OOM.
+            # description_original is included: region classifier never reads it
+            # (only title_original is used), so loading it wastes memory.
             .defer(
                 'raw_payload', 'engagement_signals',
                 'canonical_title', 'canonical_description', 'canonical_error',
                 'display_title_zh_hans', 'display_description_zh_hans',
+                'description_original',
             )
             .order_by('-hotness')[:per_platform]
         )
@@ -95,7 +98,7 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
     Items that heuristic couldn't classify are passed to LLM pass
     (they'll get region_classified_at set there).
     """
-    classified = 0
+    classified_items = []
     remaining = []
     now = timezone.now()
 
@@ -112,12 +115,22 @@ def run_heuristic_pass(items: list) -> tuple[int, list]:
             item.primary_region = primary
             item.region_classified_at = now
             item.region_classification_method = 'heuristic'
-            item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at', 'region_classification_method'])
-            classified += 1
+            classified_items.append(item)
         else:
             remaining.append(item)
 
-    return classified, remaining
+    # Bulk write heuristic-classified items — one query instead of N individual
+    # saves. Avoids N+1 write pattern that inflates connection.queries when
+    # DEBUG=True, and cuts DB round-trips from ~1500 to a handful per cycle.
+    if classified_items:
+        TrendItem.objects.bulk_update(
+            classified_items,
+            ['content_regions', 'primary_region', 'region_classified_at',
+             'region_classification_method'],
+            batch_size=500,
+        )
+
+    return len(classified_items), remaining
 
 
 def _filter_top_k_per_platform(items: list) -> list:
@@ -157,17 +170,23 @@ def _filter_top_k_per_platform(items: list) -> list:
 
 def run_llm_pass(items: list) -> int:
     """
-    Run LLM classification on remaining items.
-    Only processes the top K items per platform to control LLM cost.
+    Run LLM classification on a pre-filtered list of items.
+
+    Caller is responsible for applying _filter_top_k_per_platform before calling
+    this function. Receiving an already-filtered list avoids the double-filter
+    pattern that existed when this function filtered internally and run_once also
+    filtered to compute llm_sent_urls.
+
     Returns classified_count.
     """
     if not _is_llm_enabled():
         logger.info("LLM classification disabled (enable_llm_classification=false)")
         return 0
 
-    # Only classify top K per platform to save LLM cost
-    items = _filter_top_k_per_platform(items)
-    logger.info(f"LLM total after per-platform filtering: {len(items)} items")
+    if not items:
+        return 0
+
+    logger.info(f"LLM pass: {len(items)} pre-filtered items")
 
     classified = 0
 
@@ -184,18 +203,35 @@ def run_llm_pass(items: list) -> int:
         results = classify_batch_llm(batch_dicts)
 
         now = timezone.now()
+        classified_in_batch = []
+        unclassified_in_batch = []
+
         for item, (regions, primary) in zip(batch, results):
-            # Always set region_classified_at so we don't re-process this item
             item.region_classified_at = now
             item.region_classification_method = 'llm'
             if regions:
                 item.content_regions = regions
                 item.primary_region = primary
-                item.save(update_fields=['content_regions', 'primary_region', 'region_classified_at', 'region_classification_method'])
+                classified_in_batch.append(item)
                 classified += 1
             else:
                 # LLM said no specific region — mark as tried so we don't re-ask
-                item.save(update_fields=['region_classified_at', 'region_classification_method'])
+                unclassified_in_batch.append(item)
+
+        # Bulk write — one query per batch instead of one per item.
+        if classified_in_batch:
+            TrendItem.objects.bulk_update(
+                classified_in_batch,
+                ['content_regions', 'primary_region', 'region_classified_at',
+                 'region_classification_method'],
+                batch_size=500,
+            )
+        if unclassified_in_batch:
+            TrendItem.objects.bulk_update(
+                unclassified_in_batch,
+                ['region_classified_at', 'region_classification_method'],
+                batch_size=500,
+            )
 
     return classified
 
@@ -216,29 +252,32 @@ def run_once():
     if not remaining:
         return
 
-    # LLM pass for remaining items (only top K per platform will actually be sent)
+    # LLM pass for remaining items — filter to top K per platform first so
+    # run_llm_pass receives an already-filtered list (no internal re-filter).
     if _is_llm_enabled():
         llm_sent_items = _filter_top_k_per_platform(remaining)
-        llm_sent_urls = {item.id for item in llm_sent_items}
-        llm_count = 0
-        if llm_sent_items:
-            llm_count = run_llm_pass(remaining)  # run_llm_pass re-applies the filter
+        llm_sent_ids = {item.id for item in llm_sent_items}
+        llm_count = run_llm_pass(llm_sent_items)
         logger.info(f"LLM: classified {llm_count}, sent {len(llm_sent_items)}, unclassified {len(remaining) - llm_count}")
     else:
         # LLM disabled — mark every remaining item as tried so they don't re-poll
         # (all items land in not_sent block below, which sets region_classification_method='skipped')
         logger.info(f"LLM disabled — marking {len(remaining)} remaining items as tried")
-        llm_sent_urls = set()
+        llm_sent_ids = set()
 
-    # Mark items NOT sent to LLM as tried too (they're low-hotness and won't be re-attempted
-    # via LLM; heuristic already failed on them). This prevents infinite re-polling.
-    now = timezone.now()
-    not_sent = [item for item in remaining if item.id not in llm_sent_urls]
-    for item in not_sent:
-        item.region_classified_at = now
-        item.region_classification_method = 'skipped'
-        item.save(update_fields=['region_classified_at', 'region_classification_method'])
+    # Mark items NOT sent to LLM as tried (low-hotness items won't be re-attempted).
+    # Bulk write — avoids N+1 saves that inflate connection.queries with DEBUG=True.
+    not_sent = [item for item in remaining if item.id not in llm_sent_ids]
     if not_sent:
+        now = timezone.now()
+        for item in not_sent:
+            item.region_classified_at = now
+            item.region_classification_method = 'skipped'
+        TrendItem.objects.bulk_update(
+            not_sent,
+            ['region_classified_at', 'region_classification_method'],
+            batch_size=500,
+        )
         logger.info(f"Marked {len(not_sent)} low-hotness items as tried (skip LLM)")
 
 
