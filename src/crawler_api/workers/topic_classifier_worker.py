@@ -1,21 +1,23 @@
 """
 Topic classifier worker — classifies TrendItems by topic.
 
-Implements the classification state machine per class.txt design:
+Implements the classification state machine:
 
   pending → heuristic pass runs
     ├─ no category found (tier=none)
-    │    → LLM eligible unconditionally → llm_complete or failed
+    │    ├─ in platform top-K → LLM → llm_complete or failed
+    │    └─ not in top-K     → failed (no LLM cost)
     │
     └─ category found (classified_by ∈ {bucket, platform, keyword, locale, surface})
          ├─ tier=high/medium (bucket, platform, keyword) → heuristic_complete
-         ├─ tier=low AND NOT high-hotness AND NOT platform-top → heuristic_complete
-         └─ tier=low AND (high-hotness OR platform-top)      → LLM attempt
-              ├─ LLM finds category → llm_complete
-              └─ LLM fails         → heuristic_complete (heuristic result preserved)
+         ├─ tier=low AND in platform top-K → LLM attempt
+         │    ├─ LLM finds category → llm_complete
+         │    └─ LLM fails         → heuristic_complete (heuristic result preserved)
+         └─ tier=low AND not in top-K → heuristic_complete (low-confidence result kept)
 
-LLM eligibility is now based on confidence tier, not just empty tags.
-Low-confidence (locale/surface) + high-hotness items are sent to LLM for rescue.
+LLM is only called for items in the platform top-K (topic_llm_top_k_per_platform).
+This aligns LLM cost with story_engine usage — only hot items per platform matter.
+tier=none items outside top-K are marked failed immediately at no LLM cost.
 
 Version management:
   On startup and after each auto_keywords.json hot-reload, compute
@@ -86,40 +88,6 @@ def _is_llm_enabled() -> bool:
         return True
 
 
-def _get_locale_hot_percent(lang_group: str | None) -> int | None:
-    """
-    Get the per-locale hotness percent threshold for LLM classification.
-    Reads translation_hot_percent_<lang_group> from SystemSettings.
-    Returns None if the key is absent — callers must treat None as not high-hotness
-    (fail safe: missing config → no LLM upgrade for that lang_group).
-    Does NOT fall back to a global key or hardcoded default.
-    """
-    try:
-        if lang_group:
-            key = f'translation_hot_percent_{lang_group}'
-            val = SystemSettings.get_setting(key, default=None)
-            if val is not None:
-                return int(val)
-        return None  # key absent — fail safe
-    except Exception:
-        return None
-
-
-def _is_high_hotness(item) -> bool:
-    """
-    Check if item meets the high-hotness threshold for LLM classification.
-    Reads the same SystemSetting used by translation_worker.
-    Returns False if threshold is absent for this lang_group (fail safe).
-    """
-    threshold = _get_locale_hot_percent(item.lang_group)
-    if threshold is None:
-        return False  # no threshold configured for this lang_group — not eligible
-    if item.hotness is None:
-        return False
-    # threshold is a percentile cutoff — we use it as a minimum score floor
-    return item.hotness >= threshold
-
-
 def _confidence_tier(classified_by: str | None) -> str:
     """Return confidence tier for a classified_by signal value."""
     if classified_by is None:
@@ -133,23 +101,17 @@ def _is_llm_eligible(
     platform_top_k_ids: set[int] | None = None,
 ) -> bool:
     """
-    Determine LLM eligibility based on confidence tier.
+    Determine LLM eligibility.
 
-    tier=none  → eligible unconditionally (no heuristic result)
-    tier=low   → eligible if item meets global high-hotness threshold OR is in
-                 the top-K for its platform (platform_top_k_ids)
-    tier=high/medium → not eligible
+    LLM is only called for items in the platform top-K, regardless of tier.
+    tier=high/medium items are already confidently classified — no LLM needed.
+    tier=none and tier=low items outside top-K are skipped (no LLM cost).
     """
     tier = _confidence_tier(classified_by)
-    if tier == 'none':
-        return True
-    if tier == 'low':
-        if _is_high_hotness(item):
-            return True
-        if platform_top_k_ids and item.id in platform_top_k_ids:
-            return True
+    if tier in ('high', 'medium'):
         return False
-    return False
+    # tier=none or tier=low: only eligible if in platform top-K
+    return bool(platform_top_k_ids and item.id in platform_top_k_ids)
 
 
 def _get_stored_classifier_version() -> str:
@@ -351,10 +313,12 @@ def run_once(current_version: str) -> None:
                     item.topic_classified_at = now
                     heuristic_complete.append(item)
         else:
-            # No category found
-            if enable_llm:
+            # No category found (tier=none)
+            # Only send to LLM if in platform top-K — aligns cost with story_engine usage.
+            if enable_llm and _is_llm_eligible(None, item, platform_top_k_ids):
                 needs_llm.append((item, None, None))
             else:
+                # Not in top-K (or LLM disabled) → failed immediately, no LLM cost
                 item.classification_state = 'failed'
                 item.topic_classified_at = now
                 failed_items.append(item)
@@ -376,7 +340,7 @@ def run_once(current_version: str) -> None:
             ['classification_state', 'topic_classified_at'],
             batch_size=500,
         )
-        logger.info(f"Failed (LLM disabled): {len(failed_items)} items → failed")
+        logger.info(f"Failed (no top-K match or LLM disabled): {len(failed_items)} items → failed")
 
     if not needs_llm:
         return

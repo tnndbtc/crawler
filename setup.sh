@@ -1974,25 +1974,33 @@ print(f'  Pending:               {topic_pending:>8}  <- heuristic pass next cycl
 print(f'  Failed (no category):  {topic_failed:>8}  <- heuristic + LLM found no match')
 
 print()
-print('  Pending items breakdown:')
-h_l='Locale'; h_p='Pending'; h_pc='Percent'; h_lb='LLM Budget'; h_sk='Below threshold'
-print(f'    {h_l:<8} {h_p:>10} {h_pc:>8} {h_lb:>12}  {h_sk:>16}')
-print('    ' + '-'*58)
+print('  Pending items breakdown (by locale):')
+print(f'    {\"Locale\":<8} {\"Pending\":>10}')
+print('    ' + '-'*20)
 topic_pending_by_locale = (
     TrendItem.objects.filter(classification_state='pending')
     .values('lang_group').annotate(c=Count('id')).order_by('-c')
 )
-topic_total_llm = topic_total_skipped = 0
 for row in topic_pending_by_locale:
     lg = row['lang_group'] or 'unknown'; count = row['c']
-    pct = _hot_pct(lg)
-    llm_budget = max(1, count * pct // 100) if count > 0 else 0
-    skipped = count - llm_budget
-    topic_total_llm += llm_budget; topic_total_skipped += skipped
-    print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_budget:>12}  {skipped:>16}')
-print('    ' + '-'*58)
-print(f'    {\"TOTAL\":<8} {topic_pending:>10} {\"\":>8} {topic_total_llm:>12}  {topic_total_skipped:>16}')
-print('    Note: below-threshold items are marked tried without LLM (no cost).')
+    print(f'    {lg:<8} {count:>10}')
+print('    ' + '-'*20)
+print(f'    {\"TOTAL\":<8} {topic_pending:>10}')
+
+try:
+    topic_k = int(all_settings.get('topic_llm_top_k_per_platform', 50))
+except Exception:
+    topic_k = 50
+topic_platform_count = (
+    TrendItem.objects.filter(classification_state='pending')
+    .order_by().values_list('surface__platform', flat=True).distinct().count()
+)
+topic_llm_budget = topic_k * topic_platform_count
+print()
+print(f'  LLM budget (top-{topic_k} per platform):')
+print(f'    Platforms with pending items:  {topic_platform_count:>6}')
+print(f'    Max LLM calls this cycle:      {topic_llm_budget:>6}  ({topic_k} x {topic_platform_count} platforms)')
+print(f'    Actual < max if top-{topic_k} items are classified by heuristic.')
 
 # story_category distribution — one GROUP BY, no JSONField scan
 print()
