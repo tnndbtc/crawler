@@ -74,6 +74,12 @@ def get_unclassified_items(per_platform: int | None = None) -> list:
                 surface__platform=platform,
             )
             .select_related('surface', 'region')
+            # Defer large fields not needed for region classification to prevent OOM.
+            .defer(
+                'raw_payload', 'engagement_signals',
+                'canonical_title', 'canonical_description', 'canonical_error',
+                'display_title_zh_hans', 'display_description_zh_hans',
+            )
             .order_by('-hotness')[:per_platform]
         )
         result.extend(items)

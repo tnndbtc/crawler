@@ -234,6 +234,15 @@ def get_pending_items(per_platform: int | None = None) -> list:
             TrendItem.objects
             .filter(classification_state='pending', surface__platform=platform)
             .select_related('surface', 'region')
+            # Defer large fields not needed for classification to prevent OOM.
+            # raw_payload (avg 2.5 KB JSON) × 33,000 items = ~250 MB raw JSON,
+            # which Python expands to ~750 MB–1 GB of dicts in memory.
+            # engagement_signals, canonical_*, display_* are also unused here.
+            .defer(
+                'raw_payload', 'engagement_signals',
+                'canonical_title', 'canonical_description', 'canonical_error',
+                'display_title_zh_hans', 'display_description_zh_hans',
+            )
             .order_by('-hotness')[:per_platform]
         )
         result.extend(items)

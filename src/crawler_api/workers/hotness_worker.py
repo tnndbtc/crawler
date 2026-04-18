@@ -342,8 +342,14 @@ async def run_worker_loop():
         try:
             cycle_start = timezone.now()
 
-            # Check if hotness worker is enabled
-            if not SystemSettings.get_setting("crawler_hotness_worker_enabled", default=False):
+            # Check if hotness worker is enabled.
+            # Must use sync_to_async — SystemSettings.get_setting() hits the ORM,
+            # which raises SynchronousOnlyOperation when called directly in an
+            # async context (Django blocks sync DB calls from the event loop).
+            enabled = await sync_to_async(SystemSettings.get_setting)(
+                "crawler_hotness_worker_enabled", default=False
+            )
+            if not enabled:
                 logger.info("Hotness worker disabled by configuration")
                 await asyncio.sleep(HOTNESS_WORKER_POLL_INTERVAL)
                 continue

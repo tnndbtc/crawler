@@ -344,24 +344,39 @@ start_all_services() {
         fi
     fi
 
-    # Check database - auto-run migrations if not exists
-    if [ ! -f "$DB_FILE" ]; then
-        print_warning "Database not found - running migrations..."
+    # Detect database backend.
+    # When DATABASE_URL points to PostgreSQL there is no db.sqlite3 file —
+    # skip the file-existence check and WAL setup (both SQLite-only concerns).
+    if [[ "${DATABASE_URL:-}" == postgres://* ]] || [[ "${DATABASE_URL:-}" == postgresql://* ]]; then
+        # ── PostgreSQL mode ───────────────────────────────────────────────────
+        print_info "PostgreSQL mode (DATABASE_URL is set) — running migrations..."
         cd "$SCRIPT_DIR"
         python3 manage.py migrate 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
-        if [ ! -f "$DB_FILE" ]; then
-            print_error "Database creation failed"
+        if [ $? -ne 0 ]; then
+            print_error "Migration failed — check errors above"
             return 1
         fi
-        print_success "Database created"
-    fi
+        print_success "Migrations applied (PostgreSQL)"
+    else
+        # ── SQLite mode ───────────────────────────────────────────────────────
+        # Check database - auto-run migrations if not exists
+        if [ ! -f "$DB_FILE" ]; then
+            print_warning "Database not found - running migrations..."
+            cd "$SCRIPT_DIR"
+            python3 manage.py migrate 2>&1 | grep -v "virtualenvwrapper" | grep -v "hook_loader" | grep -v "ModuleNotFoundError"
+            if [ ! -f "$DB_FILE" ]; then
+                print_error "Database creation failed"
+                return 1
+            fi
+            print_success "Database created"
+        fi
 
-    # Enable WAL journal mode on SQLite (idempotent — safe to run every start).
-    # WAL allows readers (option 7, admin) and writers (workers) to run at the
-    # same time without "database is locked" errors.  Must be set while no worker
-    # holds an exclusive lock, which is guaranteed here (workers haven't started yet).
-    print_step "Enabling SQLite WAL mode..."
-    python3 -c "
+        # Enable WAL journal mode on SQLite (idempotent — safe to run every start).
+        # WAL allows readers (option 7, admin) and writers (workers) to run at the
+        # same time without "database is locked" errors.  Must be set while no worker
+        # holds an exclusive lock, which is guaranteed here (workers haven't started yet).
+        print_step "Enabling SQLite WAL mode..."
+        python3 -c "
 import sqlite3, sys
 conn = sqlite3.connect('${DB_FILE}', timeout=5)
 result = conn.execute('PRAGMA journal_mode=WAL;').fetchone()
@@ -372,7 +387,8 @@ if result and result[0] == 'wal':
 else:
     print(f'journal mode: {result[0] if result else \"unknown\"}')
 " 2>&1 | grep -v "virtualenvwrapper"
-    print_success "SQLite WAL mode enabled"
+        print_success "SQLite WAL mode enabled"
+    fi
 
     # Auto-seed from config/seeds.json (idempotent — safe to run every start)
     print_step "Loading seeds from config/seeds.json..."
@@ -1004,11 +1020,13 @@ restore_database() {
 run_migrations() {
     print_header "Run Database Migrations"
 
-    # Check if database exists
-    if [ ! -f "$DB_FILE" ]; then
-        print_error "Database not found"
-        print_info "Run option 10 (First-Time Setup) first"
-        return 1
+    # In PostgreSQL mode there is no db.sqlite3 file — check DATABASE_URL instead.
+    if [[ "${DATABASE_URL:-}" != postgres://* ]] && [[ "${DATABASE_URL:-}" != postgresql://* ]]; then
+        if [ ! -f "$DB_FILE" ]; then
+            print_error "Database not found"
+            print_info "Run option 10 (First-Time Setup) first"
+            return 1
+        fi
     fi
 
     print_info "This will detect model changes, generate migrations, and apply them"
@@ -1241,9 +1259,12 @@ print(User.objects.filter(is_superuser=True).count())
 create_db_user() {
     print_header "Create DB User"
 
-    if [ ! -f "$DB_FILE" ]; then
-        print_error "Database not found. Run migrations first."
-        return 1
+    # Skip SQLite file check in PostgreSQL mode
+    if [[ "${DATABASE_URL:-}" != postgres://* ]] && [[ "${DATABASE_URL:-}" != postgresql://* ]]; then
+        if [ ! -f "$DB_FILE" ]; then
+            print_error "Database not found. Run migrations first."
+            return 1
+        fi
     fi
 
     cd "$SCRIPT_DIR"
@@ -1605,11 +1626,13 @@ test_menu() {
 force_collection_run() {
     print_header "Force Collection Run"
 
-    # Check if database exists
-    if [ ! -f "$DB_FILE" ]; then
-        print_error "Database not found"
-        print_info "Run option 9 (First-Time Setup) first"
-        return 1
+    # Check if database exists (skip in PostgreSQL mode — no SQLite file)
+    if [[ "${DATABASE_URL:-}" != postgres://* ]] && [[ "${DATABASE_URL:-}" != postgresql://* ]]; then
+        if [ ! -f "$DB_FILE" ]; then
+            print_error "Database not found"
+            print_info "Run option 9 (First-Time Setup) first"
+            return 1
+        fi
     fi
 
     # Check if surface worker is running
