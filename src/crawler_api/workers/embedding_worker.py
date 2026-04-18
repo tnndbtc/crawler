@@ -101,11 +101,13 @@ def _build_embed_text(item: TrendItem) -> str:
     """
     parts: List[str] = []
 
-    title = (item.canonical_title or '').strip()[:_TITLE_MAX]
+    # Prefer canonical (English) fields; fall back to original locale when
+    # the translation worker has not run (canonical_title is NULL).
+    title = (item.canonical_title or item.title_original or '').strip()[:_TITLE_MAX]
     if title:
         parts.append(title)
 
-    desc = (item.canonical_description or '').strip()[:_DESC_MAX]
+    desc = (item.canonical_description or item.description_original or '').strip()[:_DESC_MAX]
     if desc:
         parts.append(desc)
 
@@ -125,19 +127,22 @@ def _build_embed_text(item: TrendItem) -> str:
 
 def _items_needing_embedding(last_id: int, limit: int) -> List[TrendItem]:
     """
-    Return up to `limit` items with canonical_title that have no embedding yet,
+    Return up to `limit` items that have no embedding yet,
     with id > last_id (for stable cursor-based backfill).
+
+    Requires title_original (always set at crawl time) so items are never
+    skipped just because the translation worker hasn't run.  canonical_title
+    is preferred in _build_embed_text; title_original is the fallback.
     """
     return list(
         TrendItem.objects
-        .filter(canonical_title__isnull=False)
-        .exclude(canonical_title='')
+        .filter(title_original__isnull=False)
+        .exclude(title_original='')
         .filter(id__gt=last_id)
         .exclude(derivations__derivation_type=DERIVATION_TYPE)
         .order_by('id')
-        # No select_related — embedding builder only reads local fields
-        # (canonical_title, canonical_description, raw_payload).
-        .only('id', 'canonical_title', 'canonical_description', 'raw_payload')
+        .only('id', 'canonical_title', 'canonical_description',
+              'title_original', 'description_original', 'raw_payload')
         [:limit]
     )
 
@@ -145,8 +150,8 @@ def _items_needing_embedding(last_id: int, limit: int) -> List[TrendItem]:
 def _count_needing_embedding() -> int:
     return (
         TrendItem.objects
-        .filter(canonical_title__isnull=False)
-        .exclude(canonical_title='')
+        .filter(title_original__isnull=False)
+        .exclude(title_original='')
         .exclude(derivations__derivation_type=DERIVATION_TYPE)
         .count()
     )
