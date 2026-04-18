@@ -1918,23 +1918,23 @@ print(f'    Pending (never tried):  {pending:>5}')
 print(f'    Tried, no region:       {tried_no_region:>5}  <- LLM said none, or skipped')
 
 print()
-print('  Pending items: per-locale LLM queue:')
-print(f'    {\"Locale\":<8} {\"Pending\":>10} {\"Percent\":>8} {\"LLM Queue\":>10}')
+print('  Pending items: per-platform LLM queue (top-K=20 per platform):')
+print(f'    {\"Platform\":<16} {\"Pending\":>10} {\"LLM Queue\":>10}')
 print('    ' + '-'*40)
-pending_by_locale = (
+pending_by_platform = (
     TrendItem.objects
     .filter(primary_region__isnull=True, region_classified_at__isnull=True)
-    .values('lang_group').annotate(c=Count('id')).order_by('-c')
+    .values('surface__platform').annotate(c=Count('id')).order_by('-c')
 )
+TOP_K = 20
 total_llm = 0
-for row in pending_by_locale:
-    lg = row['lang_group'] or 'unknown'; count = row['c']
-    pct = _hot_pct(lg)
-    llm_count = max(1, count * pct // 100) if count > 0 else 0
+for row in pending_by_platform:
+    platform = row['surface__platform'] or 'unknown'; count = row['c']
+    llm_count = min(count, TOP_K)
     total_llm += llm_count
-    print(f'    {lg:<8} {count:>10} {pct:>7}% {llm_count:>10}')
+    print(f'    {platform:<16} {count:>10} {llm_count:>10}')
 print('    ' + '-'*40)
-print(f'    {\"TOTAL\":<8} {pending:>10} {\"\":>8} {total_llm:>10}')
+print(f'    {\"TOTAL\":<16} {pending:>10} {total_llm:>10}')
 
 print()
 print('  Top content regions:')
@@ -1974,18 +1974,18 @@ print(f'  Pending:               {topic_pending:>8}  <- heuristic pass next cycl
 print(f'  Failed (no category):  {topic_failed:>8}  <- heuristic + LLM found no match')
 
 print()
-print('  Pending items breakdown (by locale):')
-print(f'    {\"Locale\":<8} {\"Pending\":>10}')
-print('    ' + '-'*20)
-topic_pending_by_locale = (
+print('  Pending items breakdown (by platform):')
+print(f'    {\"Platform\":<16} {\"Pending\":>10}')
+print('    ' + '-'*28)
+topic_pending_by_platform = (
     TrendItem.objects.filter(classification_state='pending')
-    .values('lang_group').annotate(c=Count('id')).order_by('-c')
+    .values('surface__platform').annotate(c=Count('id')).order_by('-c')
 )
-for row in topic_pending_by_locale:
-    lg = row['lang_group'] or 'unknown'; count = row['c']
-    print(f'    {lg:<8} {count:>10}')
-print('    ' + '-'*20)
-print(f'    {\"TOTAL\":<8} {topic_pending:>10}')
+for row in topic_pending_by_platform:
+    platform = row['surface__platform'] or 'unknown'; count = row['c']
+    print(f'    {platform:<16} {count:>10}')
+print('    ' + '-'*28)
+print(f'    {\"TOTAL\":<16} {topic_pending:>10}')
 
 try:
     topic_k = int(all_settings.get('topic_llm_top_k_per_platform', 50))
