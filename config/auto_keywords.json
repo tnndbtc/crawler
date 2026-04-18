@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-18T04:00:11Z",
+  "generated_at": "2026-04-18T05:00:14Z",
   "keywords": {
     "business": [
       {
@@ -845,6 +845,12 @@
       {
         "term": "日銀",
         "lang": "ja",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "景房",
+        "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 2
       },
@@ -2435,6 +2441,12 @@
         "score": 2
       },
       {
+        "term": "公分",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 5
+      },
+      {
         "term": "公售",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -2921,6 +2933,12 @@
         "score": 3
       },
       {
+        "term": "曝光",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "曾沛慈",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -3021,6 +3039,12 @@
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 5
+      },
+      {
+        "term": "正妹",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "正義",
@@ -3411,6 +3435,12 @@
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 8
+      },
+      {
+        "term": "莫西",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "葉茜",
@@ -6370,7 +6400,7 @@
         "term": "ट्रंप",
         "lang": "hi",
         "last_seen": "2026-04-18",
-        "score": 14
+        "score": 16
       },
       {
         "term": "डाल",
@@ -6455,6 +6485,12 @@
         "lang": "hi",
         "last_seen": "2026-04-18",
         "score": 4
+      },
+      {
+        "term": "पर",
+        "lang": "hi",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "पवन",
@@ -6803,6 +6839,12 @@
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 8
+      },
+      {
+        "term": "主橋",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
       },
       {
         "term": "主義",
@@ -7507,6 +7549,12 @@
         "score": 2
       },
       {
+        "term": "高虹安",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "黎巴嫩",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -8158,7 +8206,7 @@
         "term": "종전",
         "lang": "ko",
         "last_seen": "2026-04-18",
-        "score": 6
+        "score": 8
       },
       {
         "term": "주장",
@@ -9269,6 +9317,12 @@
         "score": 2
       },
       {
+        "term": "La Jornada",
+        "lang": "es",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
         "term": "Lago Fusaro",
         "lang": "it",
         "last_seen": "2026-04-18",
@@ -10038,6 +10092,12 @@
       },
       {
         "term": "假訊息",
+        "lang": "zh",
+        "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "優季",
         "lang": "zh",
         "last_seen": "2026-04-18",
         "score": 2
@@ -10856,7 +10916,7 @@
         "term": "男童",
         "lang": "zh",
         "last_seen": "2026-04-18",
-        "score": 10
+        "score": 15
       },
       {
         "term": "疙瘩",

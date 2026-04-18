@@ -79,7 +79,7 @@ CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
         result = subprocess.run(
             [
                 'claude', '-p',
-                '--model', 'sonnet',
+                '--model', 'haiku',
                 '--system-prompt',
                 'You are a region classifier. Output ONLY a JSON array of '
                 'region-code lists. No prose, no markdown, no explanation.',
