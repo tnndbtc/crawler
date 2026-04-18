@@ -224,6 +224,9 @@ def get_pending_items(per_platform: int | None = None) -> list:
     platforms = (
         TrendItem.objects
         .filter(classification_state='pending')
+        .order_by()          # clear default ordering — otherwise Django appends
+                             # "collected_at" to the DISTINCT SELECT, making every
+                             # row unique and returning ~N items instead of ~N platforms.
         .values_list('surface__platform', flat=True)
         .distinct()
     )
