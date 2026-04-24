@@ -351,7 +351,7 @@ async def run_worker_loop():
                         logger.info("Triggering compute_weights.py after crawl cycle...")
                         proc = await asyncio.create_subprocess_exec(
                             sys.executable,
-                            '/home/tnnd/data/code/story_engine/compute_weights.py',
+                            '/home/tnnd/data/code/story_engine/src/scripts/compute_weights.py',
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
                         )
