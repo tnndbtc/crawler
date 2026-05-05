@@ -3472,7 +3472,9 @@
       "poll_interval_seconds": 3600,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://www.federalreserve.gov/feeds/press_all.xml"],
+        "feed_urls": [
+          "https://www.federalreserve.gov/feeds/press_all.xml"
+        ],
         "locale": "en-US",
         "source_name": "Federal Reserve"
       }
@@ -3489,7 +3491,9 @@
       "poll_interval_seconds": 3600,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://www.ecb.europa.eu/rss/press.html"],
+        "feed_urls": [
+          "https://www.ecb.europa.eu/rss/press.html"
+        ],
         "locale": "en",
         "source_name": "European Central Bank"
       }
@@ -3506,7 +3510,9 @@
       "poll_interval_seconds": 3600,
       "max_items_per_run": 50,
       "config_json": {
-        "feed_urls": ["https://finance.yahoo.com/news/rssindex"],
+        "feed_urls": [
+          "https://finance.yahoo.com/news/rssindex"
+        ],
         "locale": "en-US",
         "source_name": "Yahoo Finance"
       }
@@ -3523,7 +3529,9 @@
       "poll_interval_seconds": 3600,
       "max_items_per_run": 50,
       "config_json": {
-        "feed_urls": ["https://finance.yahoo.com/rss/2.0/headline?s=tech&region=US&lang=en-US"],
+        "feed_urls": [
+          "https://finance.yahoo.com/rss/2.0/headline?s=tech&region=US&lang=en-US"
+        ],
         "locale": "en-US",
         "source_name": "Yahoo Finance Tech"
       }
@@ -3678,7 +3686,9 @@
       "poll_interval_seconds": 1800,
       "max_items_per_run": 40,
       "config_json": {
-        "feed_urls": ["http://www.scmp.com/rss/91/feed/"],
+        "feed_urls": [
+          "http://www.scmp.com/rss/91/feed/"
+        ],
         "locale": "en-HK",
         "source_name": "South China Morning Post"
       }
@@ -3695,7 +3705,9 @@
       "poll_interval_seconds": 1800,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"],
+        "feed_urls": [
+          "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml"
+        ],
         "locale": "en-SG",
         "source_name": "Channel News Asia"
       }
@@ -3712,9 +3724,11 @@
       "poll_interval_seconds": 3600,
       "max_items_per_run": 20,
       "config_json": {
-        "feed_urls": ["https://theinitium.com/rss/"],
+        "feed_urls": [
+          "https://theinitium.com/rss/"
+        ],
         "locale": "zh-Hant",
-        "source_name": "端传媒 Initium Media"
+        "source_name": "\u7aef\u4f20\u5a92 Initium Media"
       }
     },
     {
@@ -3729,9 +3743,11 @@
       "poll_interval_seconds": 1800,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://news.mingpao.com/rss/pns/s00001.xml"],
+        "feed_urls": [
+          "https://news.mingpao.com/rss/pns/s00001.xml"
+        ],
         "locale": "zh-Hant",
-        "source_name": "明報要聞"
+        "source_name": "\u660e\u5831\u8981\u805e"
       }
     },
     {
@@ -3746,9 +3762,11 @@
       "poll_interval_seconds": 1800,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://news.mingpao.com/rss/pns/s00004.xml"],
+        "feed_urls": [
+          "https://news.mingpao.com/rss/pns/s00004.xml"
+        ],
         "locale": "zh-Hant",
-        "source_name": "明報經濟"
+        "source_name": "\u660e\u5831\u7d93\u6fdf"
       }
     },
     {
@@ -3763,9 +3781,158 @@
       "poll_interval_seconds": 1800,
       "max_items_per_run": 30,
       "config_json": {
-        "feed_urls": ["https://news.mingpao.com/rss/pns/s00013.xml"],
+        "feed_urls": [
+          "https://news.mingpao.com/rss/pns/s00013.xml"
+        ],
         "locale": "zh-Hant",
-        "source_name": "明報中國"
+        "source_name": "\u660e\u5831\u4e2d\u570b"
+      }
+    },
+    {
+      "region": "us",
+      "key": "coindesk_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "feed_urls": [
+          "https://www.coindesk.com/arc/outboundfeeds/rss"
+        ],
+        "locale": "en-US",
+        "source_name": "coindesk",
+        "headers": {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "application/rss+xml,application/xml;q=0.9,*/*;q=0.8"
+        }
+      }
+    },
+    {
+      "region": "us",
+      "key": "cointelegraph_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 30,
+      "config_json": {
+        "feed_urls": [
+          "https://cointelegraph.com/rss"
+        ],
+        "locale": "en-US",
+        "source_name": "cointelegraph"
+      }
+    },
+    {
+      "region": "us",
+      "key": "decrypt_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "feed_urls": [
+          "https://decrypt.co/feed"
+        ],
+        "locale": "en-US",
+        "source_name": "decrypt"
+      }
+    },
+    {
+      "region": "us",
+      "key": "theblock_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 20,
+      "config_json": {
+        "feed_urls": [
+          "https://theblock.co/rss.xml"
+        ],
+        "locale": "en-US",
+        "source_name": "theblock"
+      }
+    },
+    {
+      "region": "us",
+      "key": "bitcoinmagazine_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 0.9,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 15,
+      "config_json": {
+        "feed_urls": [
+          "https://bitcoinmagazine.com/feed"
+        ],
+        "locale": "en-US",
+        "source_name": "bitcoinmagazine"
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_cryptocurrency",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "CryptoCurrency",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_bitcoin",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "Bitcoin",
+        "limit": 50
+      }
+    },
+    {
+      "region": "us",
+      "key": "reddit_ethereum",
+      "platform": "reddit",
+      "surface_type": "ranking",
+      "bucket": "category_crypto",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.reddit_hot:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 50,
+      "config_json": {
+        "subreddit": "ethereum",
+        "limit": 50
       }
     }
   ],

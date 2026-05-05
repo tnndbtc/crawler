@@ -6,8 +6,9 @@ surface key, lang_group, and title/description keywords.
 
 Single-label: returns one story_category string and the signal that produced it.
 
-Canonical vocabulary (9 values):
-  world, politics, business, technology, ai, science, society, sports, entertainment
+Canonical vocabulary (10 values):
+  world, politics, business, technology, ai, science, society, sports, entertainment,
+  crypto
 
 Returns (None, None) when unclassifiable — those items are passed to the LLM pass.
 
@@ -30,18 +31,20 @@ _AUTO_KEYWORDS_PATH = Path(__file__).parent.parent.parent / 'config' / 'auto_key
 # Last-seen mtime of auto_keywords.json — used for hot-reload detection
 _AUTO_KEYWORDS_MTIME: float = 0.0
 
-# Canonical 9-value vocabulary
+# Canonical 10-value vocabulary
 VALID_CATEGORIES: frozenset[str] = frozenset({
     'world', 'politics', 'business', 'technology', 'ai',
-    'science', 'society', 'sports', 'entertainment',
+    'science', 'society', 'sports', 'entertainment', 'crypto',
 })
 
 # Keep VALID_TOPICS as alias for backward compatibility (keyword_harvest_worker imports it)
 VALID_TOPICS = VALID_CATEGORIES
 
 # Within-category priority: highest wins when multiple keyword matches
+# crypto sits above business so "Bitcoin ETF" → crypto, not business;
+# below politics so "Senate crypto bill vote" → politics, not crypto.
 CATEGORY_PRIORITY: list[str] = [
-    'ai', 'politics', 'business', 'technology', 'science',
+    'ai', 'politics', 'crypto', 'business', 'technology', 'science',
     'world', 'society', 'sports', 'entertainment',
 ]
 
@@ -62,6 +65,7 @@ BUCKET_STORY_CATEGORY_MAP: dict[str, str] = {
     'category_health':        'society',
     'category_crime':         'society',
     'category_environment':   'science',
+    'category_crypto':        'crypto',
     'international_news':     'world',
     'world_news':             'world',
     'global_news':            'world',
@@ -153,7 +157,7 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'Fed ', 'Federal Reserve', 'rate hike', 'rate cut', 'inflation',
         ' GDP', 'recession', 'earnings', ' IPO', ' stock ', 'stocks',
         'bond yield', 'bond market', 'government bond', 'treasury bond',
-        'corporate bond', 'junk bond', ' yield', 'crypto', 'bitcoin',
+        'corporate bond', 'junk bond', ' yield',
         ' ETF', 'hedge fund',
         'IMF', ' ECB', 'deficit', 'debt ceiling', 'stock market',
         'S&P', 'Nasdaq', 'Dow ', 'Wall Street', 'interest rate',
@@ -273,6 +277,49 @@ KEYWORD_MAP: dict[str, list[str]] = {
         'PlayStation', 'Xbox', 'Nintendo', 'streaming',
         'アニメ', '映画', 'ゲーム', 'ドラマ', '音楽',
     ],
+    'crypto': [
+        # Core terms — broad but crypto-exclusive at word-boundary level
+        'crypto', 'bitcoin', 'Bitcoin',
+        ' BTC ', ' ETH ', ' SOL ', ' XRP ',
+        'ethereum', 'Ethereum',
+        'cryptocurrency', 'cryptocurrencies',
+        'crypto exchange', 'crypto market', 'crypto price', 'crypto trading',
+        # Blockchain / infrastructure
+        'blockchain',
+        'on-chain', 'onchain',
+        'smart contract', 'smart contracts',
+        'layer 2 crypto', 'L2 rollup',
+        # DeFi / Web3 / NFT
+        'DeFi', 'Web3',
+        'NFT', ' NFTs',
+        'altcoin', 'altcoins',
+        'stablecoin', 'stablecoins',
+        'USDT', 'USDC',
+        'decentralized finance',
+        # Token economics / events
+        'halving',
+        'memecoin', 'memecoins',
+        'token launch', 'token sale',
+        ' ICO ', ' IDO ',
+        'airdrop crypto',
+        # Mining / consensus
+        'crypto mining',
+        'proof of stake', 'proof of work',
+        # Chains / protocols — proper nouns, crypto-exclusive
+        'Solana', 'Ripple', 'Cardano', 'Polkadot', 'Avalanche', 'Chainlink',
+        # Exchanges / custodians
+        'Binance', 'Coinbase', 'Kraken',
+        'crypto wallet',
+        # Institutional / regulatory
+        'Bitcoin ETF', 'crypto ETF', 'spot Bitcoin',
+        'crypto regulation', 'SEC crypto', 'CFTC crypto',
+        # Security incidents
+        'crypto hack', 'rug pull', 'crypto scam', 'crypto fraud',
+        # Key figures
+        'Satoshi Nakamoto', 'Vitalik Buterin',
+        # CJK
+        '加密货币', '区块链', 'ビットコイン', '암호화폐',
+    ],
     # 'world' is NOT produced by keyword match — too ambiguous without explicit
     # editorial bucket/surface configuration.
 }
@@ -316,16 +363,35 @@ def _load_auto_keywords() -> dict[str, list[str]]:
         return {}
 
 
+def _make_pattern(kw: str) -> re.Pattern:
+    """
+    Compile a keyword into a regex pattern with smart word-boundary guards.
+
+    Adds \\b at each end of the keyword only when that end is an alphanumeric
+    character (or underscore).  Keywords that deliberately start or end with a
+    non-word character (spaces, punctuation — e.g. ' AI ', 'Fed ', ' GDP')
+    already rely on that character as an implicit boundary and are left
+    unchanged.
+
+    This prevents short alphabetic keywords like 'AGI' from matching as
+    substrings inside longer words (e.g. 'AGI' matching 'M[agi]c').
+    """
+    escaped = re.escape(kw)
+    prefix = r'\b' if kw and kw[0].isalnum() else ''
+    suffix = r'\b' if kw and kw[-1].isalnum() else ''
+    return re.compile(prefix + escaped + suffix, re.IGNORECASE)
+
+
 def _build_keyword_patterns() -> dict[str, list[re.Pattern]]:
     auto_kw = _load_auto_keywords()
     patterns: dict[str, list[re.Pattern]] = {}
     for category, static_keywords in KEYWORD_MAP.items():
         auto_keywords = auto_kw.get(category, [])
         merged = list(dict.fromkeys(static_keywords + auto_keywords))
-        patterns[category] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in merged]
+        patterns[category] = [_make_pattern(kw) for kw in merged]
     for category, auto_keywords in auto_kw.items():
         if category not in patterns:
-            patterns[category] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in auto_keywords]
+            patterns[category] = [_make_pattern(kw) for kw in auto_keywords]
     return patterns
 
 
@@ -385,10 +451,10 @@ def _classify_by_keywords(
         for category, static_kws in KEYWORD_MAP.items():
             auto_kws = auto_keywords_override.get(category, [])
             merged = list(dict.fromkeys(static_kws + auto_kws))
-            patterns[category] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in merged]
+            patterns[category] = [_make_pattern(kw) for kw in merged]
         for category, auto_kws in auto_keywords_override.items():
             if category not in patterns:
-                patterns[category] = [re.compile(re.escape(kw), re.IGNORECASE) for kw in auto_kws]
+                patterns[category] = [_make_pattern(kw) for kw in auto_kws]
     else:
         patterns = _KEYWORD_PATTERNS
 
