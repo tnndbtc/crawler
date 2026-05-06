@@ -3889,6 +3889,82 @@
     },
     {
       "region": "us",
+      "key": "cryptoslate_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 0.9,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "feed_urls": [
+          "https://cryptoslate.com/feed/"
+        ],
+        "locale": "en-US",
+        "source_name": "cryptoslate"
+      }
+    },
+    {
+      "region": "us",
+      "key": "newsbtc_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 0.9,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 25,
+      "config_json": {
+        "feed_urls": [
+          "https://www.newsbtc.com/feed/"
+        ],
+        "locale": "en-US",
+        "source_name": "newsbtc"
+      }
+    },
+    {
+      "region": "us",
+      "key": "utoday_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 0.85,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 20,
+      "config_json": {
+        "feed_urls": [
+          "https://u.today/rss"
+        ],
+        "locale": "en-US",
+        "source_name": "utoday"
+      }
+    },
+    {
+      "region": "us",
+      "key": "bankless_rss",
+      "platform": "rss",
+      "surface_type": "rss_feed",
+      "bucket": "category_crypto",
+      "bucket_weight": 0.85,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 3600,
+      "max_items_per_run": 10,
+      "config_json": {
+        "feed_urls": [
+          "https://www.bankless.com/feed"
+        ],
+        "locale": "en-US",
+        "source_name": "bankless"
+      }
+    },
+    {
+      "region": "us",
       "key": "reddit_cryptocurrency",
       "platform": "reddit",
       "surface_type": "ranking",

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-05T21:00:13Z",
+  "generated_at": "2026-05-06T04:00:21Z",
   "keywords": {
     "business": [
       {
@@ -7,6 +7,12 @@
         "lang": "en",
         "last_seen": "2026-04-27",
         "score": 3
+      },
+      {
+        "term": "ASX",
+        "lang": "en",
+        "last_seen": "2026-05-05",
+        "score": 2
       },
       {
         "term": "Adam Smith",
@@ -67,6 +73,12 @@
         "lang": "en",
         "last_seen": "2026-04-18",
         "score": 3
+      },
+      {
+        "term": "BTC",
+        "lang": "en",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "BYD",
@@ -1565,8 +1577,8 @@
       {
         "term": "半導體",
         "lang": "zh",
-        "last_seen": "2026-04-22",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "华泰",
@@ -1625,8 +1637,8 @@
       {
         "term": "台股",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 17
+        "last_seen": "2026-05-06",
+        "score": 19
       },
       {
         "term": "台達",
@@ -2715,6 +2727,12 @@
         "score": 2
       },
       {
+        "term": "聯發科",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "聯電",
         "lang": "zh",
         "last_seen": "2026-04-21",
@@ -2735,8 +2753,8 @@
       {
         "term": "股價",
         "lang": "zh",
-        "last_seen": "2026-04-21",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "股利",
@@ -3351,6 +3369,12 @@
         "score": 2
       },
       {
+        "term": "개장",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 3
+      },
+      {
         "term": "객실",
         "lang": "ko",
         "last_seen": "2026-04-18",
@@ -3377,8 +3401,8 @@
       {
         "term": "경신",
         "lang": "ko",
-        "last_seen": "2026-04-22",
-        "score": 3
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "경제",
@@ -3551,13 +3575,19 @@
       {
         "term": "돌파",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 7
       },
       {
         "term": "동네",
         "lang": "ko",
         "last_seen": "2026-04-25",
+        "score": 2
+      },
+      {
+        "term": "동시",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -3689,8 +3719,8 @@
       {
         "term": "분기",
         "lang": "ko",
-        "last_seen": "2026-04-30",
-        "score": 5
+        "last_seen": "2026-05-05",
+        "score": 7
       },
       {
         "term": "불똥",
@@ -3719,8 +3749,8 @@
       {
         "term": "사상",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 8
+        "last_seen": "2026-05-06",
+        "score": 10
       },
       {
         "term": "사잇돌",
@@ -3798,6 +3828,12 @@
         "term": "속보",
         "lang": "ko",
         "last_seen": "2026-04-30",
+        "score": 2
+      },
+      {
+        "term": "손실",
+        "lang": "ko",
+        "last_seen": "2026-05-05",
         "score": 2
       },
       {
@@ -3887,8 +3923,8 @@
       {
         "term": "영업",
         "lang": "ko",
-        "last_seen": "2026-04-23",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 4
       },
       {
         "term": "영업익",
@@ -4049,8 +4085,8 @@
       {
         "term": "적자",
         "lang": "ko",
-        "last_seen": "2026-04-28",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 4
       },
       {
         "term": "전기",
@@ -4097,8 +4133,8 @@
       {
         "term": "주식",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 16
+        "last_seen": "2026-05-06",
+        "score": 18
       },
       {
         "term": "주택",
@@ -4193,14 +4229,14 @@
       {
         "term": "코스피",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 28
+        "last_seen": "2026-05-06",
+        "score": 34
       },
       {
         "term": "쿠팡",
         "lang": "ko",
-        "last_seen": "2026-04-29",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "클릭",
@@ -6245,6 +6281,12 @@
         "score": 2
       },
       {
+        "term": "内容",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "冰湖",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -7507,8 +7549,8 @@
       {
         "term": "游戏",
         "lang": "zh",
-        "last_seen": "2026-04-28",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "準一",
@@ -7537,8 +7579,8 @@
       {
         "term": "演唱会",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 39
+        "last_seen": "2026-05-06",
+        "score": 42
       },
       {
         "term": "演奏家",
@@ -7897,8 +7939,8 @@
       {
         "term": "穆祉",
         "lang": "zh",
-        "last_seen": "2026-04-18",
-        "score": 3
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "站位",
@@ -9765,8 +9807,8 @@
       {
         "term": "CHP",
         "lang": "tr",
-        "last_seen": "2026-05-05",
-        "score": 14
+        "last_seen": "2026-05-06",
+        "score": 17
       },
       {
         "term": "CIA",
@@ -10138,7 +10180,7 @@
         "term": "EUA",
         "lang": "pt",
         "last_seen": "2026-05-05",
-        "score": 82
+        "score": 84
       },
       {
         "term": "Ease Voters",
@@ -10179,8 +10221,8 @@
       {
         "term": "El Gobierno",
         "lang": "es",
-        "last_seen": "2026-05-05",
-        "score": 9
+        "last_seen": "2026-05-06",
+        "score": 11
       },
       {
         "term": "El Mundo",
@@ -10873,6 +10915,12 @@
         "score": 5
       },
       {
+        "term": "MAI",
+        "lang": "pt",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
         "term": "MBL",
         "lang": "en",
         "last_seen": "2026-04-18",
@@ -11437,6 +11485,12 @@
         "score": 9
       },
       {
+        "term": "Progress Plant",
+        "lang": "en",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "Przemysław Czarnek",
         "lang": "pl",
         "last_seen": "2026-04-18",
@@ -11961,8 +12015,8 @@
       {
         "term": "The Times",
         "lang": "en",
-        "last_seen": "2026-05-03",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "The Washington Post",
@@ -12013,6 +12067,12 @@
         "score": 5
       },
       {
+        "term": "UCP",
+        "lang": "en",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "UGT",
         "lang": "pt",
         "last_seen": "2026-04-23",
@@ -12047,6 +12107,12 @@
         "lang": "en",
         "last_seen": "2026-04-30",
         "score": 3
+      },
+      {
+        "term": "VNIIR",
+        "lang": "en",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "Viktor Orban",
@@ -12153,8 +12219,8 @@
       {
         "term": "West Bengal",
         "lang": "en",
-        "last_seen": "2026-05-02",
-        "score": 10
+        "last_seen": "2026-05-05",
+        "score": 12
       },
       {
         "term": "Western Sahara",
@@ -12508,7 +12574,7 @@
         "term": "إيران",
         "lang": "ar",
         "last_seen": "2026-05-05",
-        "score": 99
+        "score": 106
       },
       {
         "term": "إيران؟",
@@ -12682,12 +12748,18 @@
         "term": "الحرب",
         "lang": "ar",
         "last_seen": "2026-05-05",
-        "score": 22
+        "score": 24
       },
       {
         "term": "الحرس",
         "lang": "ar",
         "last_seen": "2026-04-22",
+        "score": 4
+      },
+      {
+        "term": "الحرية",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
         "score": 4
       },
       {
@@ -12811,6 +12883,12 @@
         "score": 4
       },
       {
+        "term": "العمليات",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "القدس",
         "lang": "ar",
         "last_seen": "2026-04-27",
@@ -12919,6 +12997,12 @@
         "score": 2
       },
       {
+        "term": "الهجومية",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
+        "score": 3
+      },
+      {
         "term": "الهدنة",
         "lang": "ar",
         "last_seen": "2026-04-23",
@@ -12969,8 +13053,8 @@
       {
         "term": "انتهاء",
         "lang": "ar",
-        "last_seen": "2026-04-21",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "انهيار",
@@ -13107,8 +13191,8 @@
       {
         "term": "ترمب",
         "lang": "ar",
-        "last_seen": "2026-05-05",
-        "score": 36
+        "last_seen": "2026-05-06",
+        "score": 41
       },
       {
         "term": "تشارلز",
@@ -13156,6 +13240,12 @@
         "term": "تعلنان",
         "lang": "ar",
         "last_seen": "2026-05-04",
+        "score": 2
+      },
+      {
+        "term": "تعليق",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -13221,8 +13311,8 @@
       {
         "term": "حرب",
         "lang": "ar",
-        "last_seen": "2026-04-30",
-        "score": 10
+        "last_seen": "2026-05-06",
+        "score": 14
       },
       {
         "term": "حزب",
@@ -13289,6 +13379,12 @@
         "lang": "ar",
         "last_seen": "2026-05-05",
         "score": 4
+      },
+      {
+        "term": "روبيو",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "روسيا",
@@ -13633,6 +13729,12 @@
         "score": 2
       },
       {
+        "term": "مشروع",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "مضيق",
         "lang": "ar",
         "last_seen": "2026-05-05",
@@ -13641,8 +13743,8 @@
       {
         "term": "مع",
         "lang": "ar",
-        "last_seen": "2026-05-05",
-        "score": 48
+        "last_seen": "2026-05-06",
+        "score": 50
       },
       {
         "term": "مفاوضات",
@@ -13755,8 +13857,8 @@
       {
         "term": "هرمز",
         "lang": "ar",
-        "last_seen": "2026-05-05",
-        "score": 40
+        "last_seen": "2026-05-06",
+        "score": 43
       },
       {
         "term": "هرمز،",
@@ -13797,8 +13899,8 @@
       {
         "term": "وإسرائيل",
         "lang": "ar",
-        "last_seen": "2026-04-24",
-        "score": 6
+        "last_seen": "2026-05-05",
+        "score": 8
       },
       {
         "term": "وإيران",
@@ -13852,6 +13954,12 @@
         "term": "وحزب",
         "lang": "ar",
         "last_seen": "2026-04-27",
+        "score": 2
+      },
+      {
+        "term": "وروبيو",
+        "lang": "ar",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -13935,8 +14043,8 @@
       {
         "term": "يعلن",
         "lang": "ar",
-        "last_seen": "2026-05-03",
-        "score": 8
+        "last_seen": "2026-05-06",
+        "score": 11
       },
       {
         "term": "يغادر",
@@ -14007,8 +14115,14 @@
       {
         "term": "अब",
         "lang": "hi",
-        "last_seen": "2026-04-24",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
+      },
+      {
+        "term": "अभिषेक",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "अभी",
@@ -14169,8 +14283,8 @@
       {
         "term": "ऑपरेशन",
         "lang": "hi",
-        "last_seen": "2026-04-30",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "और",
@@ -14223,8 +14337,8 @@
       {
         "term": "कांग्रेस",
         "lang": "hi",
-        "last_seen": "2026-05-04",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "काउंटिंग",
@@ -14325,8 +14439,8 @@
       {
         "term": "क्या",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 58
+        "last_seen": "2026-05-06",
+        "score": 64
       },
       {
         "term": "ख़ारिज",
@@ -14350,6 +14464,12 @@
         "term": "गरम",
         "lang": "hi",
         "last_seen": "2026-05-01",
+        "score": 2
+      },
+      {
+        "term": "गवर्नर",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -14392,6 +14512,12 @@
         "term": "चर्चा",
         "lang": "hi",
         "last_seen": "2026-05-02",
+        "score": 2
+      },
+      {
+        "term": "चाहिए",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -14523,8 +14649,8 @@
       {
         "term": "ट्रंप",
         "lang": "hi",
-        "last_seen": "2026-05-03",
-        "score": 88
+        "last_seen": "2026-05-06",
+        "score": 90
       },
       {
         "term": "ठिकाना",
@@ -14623,6 +14749,18 @@
         "score": 2
       },
       {
+        "term": "तैयार",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
+        "term": "तैयारी",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "थामा",
         "lang": "hi",
         "last_seen": "2026-04-18",
@@ -14645,6 +14783,12 @@
         "lang": "hi",
         "last_seen": "2026-05-03",
         "score": 6
+      },
+      {
+        "term": "दिया",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "दी",
@@ -14829,8 +14973,8 @@
       {
         "term": "पर",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 67
+        "last_seen": "2026-05-06",
+        "score": 69
       },
       {
         "term": "पवन",
@@ -14841,8 +14985,8 @@
       {
         "term": "पश्चिम",
         "lang": "hi",
-        "last_seen": "2026-05-04",
-        "score": 16
+        "last_seen": "2026-05-06",
+        "score": 18
       },
       {
         "term": "पहले",
@@ -14973,8 +15117,8 @@
       {
         "term": "बंगाल",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 74
+        "last_seen": "2026-05-06",
+        "score": 81
       },
       {
         "term": "बड़ी",
@@ -15063,8 +15207,8 @@
       {
         "term": "बीजेपी",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 29
+        "last_seen": "2026-05-06",
+        "score": 31
       },
       {
         "term": "बोले",
@@ -15261,8 +15405,8 @@
       {
         "term": "रहा",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "रही",
@@ -15279,8 +15423,8 @@
       {
         "term": "रहे",
         "lang": "hi",
-        "last_seen": "2026-04-22",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "राघव",
@@ -15405,8 +15549,8 @@
       {
         "term": "विजय",
         "lang": "hi",
-        "last_seen": "2026-05-04",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "विदाई",
@@ -15477,8 +15621,8 @@
       {
         "term": "शाह",
         "lang": "hi",
-        "last_seen": "2026-04-24",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "शिकस्त",
@@ -15703,10 +15847,16 @@
         "score": 2
       },
       {
+        "term": "ही",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "है",
         "lang": "hi",
-        "last_seen": "2026-05-05",
-        "score": 19
+        "last_seen": "2026-05-06",
+        "score": 21
       },
       {
         "term": "हो",
@@ -15765,8 +15915,8 @@
       {
         "term": "イラン",
         "lang": "ja",
-        "last_seen": "2026-05-05",
-        "score": 79
+        "last_seen": "2026-05-06",
+        "score": 83
       },
       {
         "term": "インド",
@@ -15807,8 +15957,8 @@
       {
         "term": "ホルムズ",
         "lang": "ja",
-        "last_seen": "2026-05-05",
-        "score": 21
+        "last_seen": "2026-05-06",
+        "score": 24
       },
       {
         "term": "ロイター",
@@ -16035,8 +16185,8 @@
       {
         "term": "伊朗",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 310
+        "last_seen": "2026-05-06",
+        "score": 321
       },
       {
         "term": "伊美",
@@ -16437,8 +16587,8 @@
       {
         "term": "台灣",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 38
+        "last_seen": "2026-05-06",
+        "score": 40
       },
       {
         "term": "史國",
@@ -16719,8 +16869,8 @@
       {
         "term": "士兵",
         "lang": "zh",
-        "last_seen": "2026-04-26",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 7
       },
       {
         "term": "外力",
@@ -17167,6 +17317,12 @@
         "score": 6
       },
       {
+        "term": "怒火",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "总理",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -17319,8 +17475,8 @@
       {
         "term": "政府",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 18
+        "last_seen": "2026-05-06",
+        "score": 20
       },
       {
         "term": "政策",
@@ -17405,6 +17561,12 @@
         "lang": "zh",
         "last_seen": "2026-04-26",
         "score": 2
+      },
+      {
+        "term": "旅長",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 3
       },
       {
         "term": "日本",
@@ -17639,6 +17801,12 @@
         "lang": "zh",
         "last_seen": "2026-05-05",
         "score": 5
+      },
+      {
+        "term": "案二审",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "案件",
@@ -17907,8 +18075,8 @@
       {
         "term": "法官",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 11
       },
       {
         "term": "法庭",
@@ -17939,6 +18107,12 @@
         "lang": "zh",
         "last_seen": "2026-05-04",
         "score": 2
+      },
+      {
+        "term": "法院",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 3
       },
       {
         "term": "洪孟楷",
@@ -18025,6 +18199,18 @@
         "score": 2
       },
       {
+        "term": "烏克蘭",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
+        "term": "烏軍",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "烏龍",
         "lang": "zh",
         "last_seen": "2026-04-21",
@@ -18093,8 +18279,8 @@
       {
         "term": "特朗普",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 100
+        "last_seen": "2026-05-06",
+        "score": 102
       },
       {
         "term": "王令麟",
@@ -19071,8 +19257,8 @@
       {
         "term": "軍方",
         "lang": "zh",
-        "last_seen": "2026-05-01",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "軍火",
@@ -19144,6 +19330,12 @@
         "term": "過度",
         "lang": "zh",
         "last_seen": "2026-05-04",
+        "score": 2
+      },
+      {
+        "term": "遗书",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -19277,6 +19469,12 @@
         "lang": "zh",
         "last_seen": "2026-04-28",
         "score": 2
+      },
+      {
+        "term": "金建希",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "金流",
@@ -19903,6 +20101,12 @@
         "score": 2
       },
       {
+        "term": "개헌",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "개혁",
         "lang": "ko",
         "last_seen": "2026-04-27",
@@ -20025,8 +20229,8 @@
       {
         "term": "경향신문",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 83
+        "last_seen": "2026-05-06",
+        "score": 85
       },
       {
         "term": "계양",
@@ -20037,8 +20241,8 @@
       {
         "term": "계엄",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 9
+        "last_seen": "2026-05-06",
+        "score": 13
       },
       {
         "term": "계획",
@@ -20127,8 +20331,8 @@
       {
         "term": "공천",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 62
+        "last_seen": "2026-05-06",
+        "score": 64
       },
       {
         "term": "공화당",
@@ -20241,8 +20445,8 @@
       {
         "term": "국회",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 14
+        "last_seen": "2026-05-06",
+        "score": 16
       },
       {
         "term": "국힘",
@@ -20409,8 +20613,8 @@
       {
         "term": "김건",
         "lang": "ko",
-        "last_seen": "2026-04-28",
-        "score": 36
+        "last_seen": "2026-05-06",
+        "score": 40
       },
       {
         "term": "김민석",
@@ -20559,8 +20763,8 @@
       {
         "term": "뉴스",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 23
+        "last_seen": "2026-05-06",
+        "score": 25
       },
       {
         "term": "다국적",
@@ -20691,8 +20895,8 @@
       {
         "term": "대통령",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 209
+        "last_seen": "2026-05-06",
+        "score": 218
       },
       {
         "term": "대표",
@@ -21055,6 +21259,12 @@
         "score": 2
       },
       {
+        "term": "반대",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "반미",
         "lang": "ko",
         "last_seen": "2026-04-18",
@@ -21183,8 +21393,8 @@
       {
         "term": "법원",
         "lang": "ko",
-        "last_seen": "2026-04-28",
-        "score": 5
+        "last_seen": "2026-05-06",
+        "score": 7
       },
       {
         "term": "병사",
@@ -21363,8 +21573,14 @@
       {
         "term": "불법",
         "lang": "ko",
-        "last_seen": "2026-05-03",
-        "score": 7
+        "last_seen": "2026-05-06",
+        "score": 9
+      },
+      {
+        "term": "불패",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "붕괴",
@@ -21417,8 +21633,8 @@
       {
         "term": "사람",
         "lang": "ko",
-        "last_seen": "2026-04-23",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "사령관",
@@ -21561,8 +21777,8 @@
       {
         "term": "선거",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 42
+        "last_seen": "2026-05-06",
+        "score": 44
       },
       {
         "term": "선거구",
@@ -21817,6 +22033,18 @@
         "score": 2
       },
       {
+        "term": "신종",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 3
+      },
+      {
+        "term": "신종오",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "신중",
         "lang": "ko",
         "last_seen": "2026-05-04",
@@ -21826,6 +22054,12 @@
         "term": "신청",
         "lang": "ko",
         "last_seen": "2026-04-30",
+        "score": 2
+      },
+      {
+        "term": "신화",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -22081,6 +22315,12 @@
         "score": 3
       },
       {
+        "term": "옹호론자",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "완료",
         "lang": "ko",
         "last_seen": "2026-04-24",
@@ -22132,6 +22372,12 @@
         "term": "우려",
         "lang": "ko",
         "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "우상호",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -22207,6 +22453,12 @@
         "score": 2
       },
       {
+        "term": "유서",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 7
+      },
+      {
         "term": "유세",
         "lang": "ko",
         "last_seen": "2026-04-27",
@@ -22233,8 +22485,8 @@
       {
         "term": "유죄",
         "lang": "ko",
-        "last_seen": "2026-04-28",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 7
       },
       {
         "term": "유지",
@@ -22323,8 +22575,8 @@
       {
         "term": "이란",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 312
+        "last_seen": "2026-05-06",
+        "score": 314
       },
       {
         "term": "이란서",
@@ -22851,8 +23103,8 @@
       {
         "term": "조선일보",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 96
+        "last_seen": "2026-05-06",
+        "score": 98
       },
       {
         "term": "조세",
@@ -22875,8 +23127,8 @@
       {
         "term": "조작",
         "lang": "ko",
-        "last_seen": "2026-05-04",
-        "score": 17
+        "last_seen": "2026-05-06",
+        "score": 19
       },
       {
         "term": "조치",
@@ -23009,6 +23261,12 @@
         "lang": "ko",
         "last_seen": "2026-04-21",
         "score": 2
+      },
+      {
+        "term": "중단",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "중동",
@@ -23529,8 +23787,8 @@
       {
         "term": "트럼프",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 496
+        "last_seen": "2026-05-06",
+        "score": 508
       },
       {
         "term": "특검",
@@ -23589,8 +23847,8 @@
       {
         "term": "판사",
         "lang": "ko",
-        "last_seen": "2026-04-18",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 15
       },
       {
         "term": "패배",
@@ -23671,6 +23929,12 @@
         "score": 4
       },
       {
+        "term": "프로젝트",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 5
+      },
+      {
         "term": "프리덤",
         "lang": "ko",
         "last_seen": "2026-05-05",
@@ -23721,8 +23985,8 @@
       {
         "term": "한겨레",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 168
+        "last_seen": "2026-05-06",
+        "score": 180
       },
       {
         "term": "한국",
@@ -23793,8 +24057,8 @@
       {
         "term": "항소심",
         "lang": "ko",
-        "last_seen": "2026-04-29",
-        "score": 9
+        "last_seen": "2026-05-06",
+        "score": 14
       },
       {
         "term": "항행",
@@ -23823,8 +24087,8 @@
       {
         "term": "해방",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "해상",
@@ -23841,8 +24105,8 @@
       {
         "term": "행동",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "행세",
@@ -23931,8 +24195,8 @@
       {
         "term": "호르무즈",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 133
+        "last_seen": "2026-05-06",
+        "score": 135
       },
       {
         "term": "홍준표",
@@ -23949,8 +24213,8 @@
       {
         "term": "화물선",
         "lang": "ko",
-        "last_seen": "2026-04-22",
-        "score": 7
+        "last_seen": "2026-05-06",
+        "score": 9
       },
       {
         "term": "화성",
@@ -24629,8 +24893,8 @@
       {
         "term": "天氣",
         "lang": "zh",
-        "last_seen": "2026-05-03",
-        "score": 10
+        "last_seen": "2026-05-06",
+        "score": 14
       },
       {
         "term": "天问",
@@ -24939,6 +25203,12 @@
         "score": 2
       },
       {
+        "term": "結界",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "老鼠",
         "lang": "zh",
         "last_seen": "2026-05-04",
@@ -25017,6 +25287,12 @@
         "score": 2
       },
       {
+        "term": "鄭明典",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "重症",
         "lang": "zh",
         "last_seen": "2026-05-03",
@@ -25025,14 +25301,20 @@
       {
         "term": "鋒面",
         "lang": "zh",
-        "last_seen": "2026-05-03",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "降雨",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
+      },
+      {
+        "term": "雨勢",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 3
       },
       {
         "term": "雨量",
@@ -25508,6 +25790,12 @@
         "term": "British Columbia",
         "lang": "en",
         "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "British Red Cross",
+        "lang": "en",
+        "last_seen": "2026-05-05",
         "score": 2
       },
       {
@@ -26405,6 +26693,12 @@
         "score": 2
       },
       {
+        "term": "Sud Ouest",
+        "lang": "fr",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
         "term": "Super Scooper",
         "lang": "en",
         "last_seen": "2026-04-13",
@@ -26588,6 +26882,12 @@
         "term": "What They Mean",
         "lang": "en",
         "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "Willy Bardon",
+        "lang": "fr",
+        "last_seen": "2026-05-05",
         "score": 2
       },
       {
@@ -27461,6 +27761,12 @@
         "score": 2
       },
       {
+        "term": "सवार",
+        "lang": "hi",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "सामने",
         "lang": "hi",
         "last_seen": "2026-04-18",
@@ -28146,6 +28452,12 @@
       },
       {
         "term": "優季",
+        "lang": "ja",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
+        "term": "優季",
         "lang": "zh",
         "last_seen": "2026-04-20",
         "score": 4
@@ -28633,8 +28945,8 @@
       {
         "term": "医生",
         "lang": "zh",
-        "last_seen": "2026-04-18",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "医院",
@@ -28669,14 +28981,14 @@
       {
         "term": "南丹",
         "lang": "ja",
-        "last_seen": "2026-04-23",
-        "score": 15
+        "last_seen": "2026-05-05",
+        "score": 17
       },
       {
         "term": "南丹市",
         "lang": "ja",
-        "last_seen": "2026-04-18",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 4
       },
       {
         "term": "南沙",
@@ -28807,8 +29119,8 @@
       {
         "term": "台南",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 26
+        "last_seen": "2026-05-06",
+        "score": 30
       },
       {
         "term": "台南市",
@@ -29191,8 +29503,8 @@
       {
         "term": "垃圾",
         "lang": "zh",
-        "last_seen": "2026-04-28",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "垃圾桶",
@@ -29245,8 +29557,8 @@
       {
         "term": "報案",
         "lang": "zh",
-        "last_seen": "2026-04-29",
-        "score": 3
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "報警",
@@ -29563,8 +29875,8 @@
       {
         "term": "女兒",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 39
+        "last_seen": "2026-05-06",
+        "score": 41
       },
       {
         "term": "女友",
@@ -29593,8 +29905,8 @@
       {
         "term": "女子",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 141
+        "last_seen": "2026-05-06",
+        "score": 143
       },
       {
         "term": "女孩",
@@ -29665,8 +29977,8 @@
       {
         "term": "女警",
         "lang": "zh",
-        "last_seen": "2026-05-04",
-        "score": 74
+        "last_seen": "2026-05-06",
+        "score": 77
       },
       {
         "term": "女警官",
@@ -29677,8 +29989,8 @@
       {
         "term": "奶茶",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "妹割頸",
@@ -29885,6 +30197,18 @@
         "score": 5
       },
       {
+        "term": "安達",
+        "lang": "ja",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
+        "term": "安達優季",
+        "lang": "ja",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
         "term": "宏新閣",
         "lang": "zh",
         "last_seen": "2026-04-20",
@@ -30001,8 +30325,8 @@
       {
         "term": "家暴",
         "lang": "zh",
-        "last_seen": "2026-04-28",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "家長",
@@ -30733,8 +31057,8 @@
       {
         "term": "悬崖",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "悶口",
@@ -31183,8 +31507,8 @@
       {
         "term": "新竹",
         "lang": "zh",
-        "last_seen": "2026-05-01",
-        "score": 9
+        "last_seen": "2026-05-06",
+        "score": 11
       },
       {
         "term": "新莊",
@@ -31291,8 +31615,8 @@
       {
         "term": "時事",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 160
+        "last_seen": "2026-05-06",
+        "score": 162
       },
       {
         "term": "時候",
@@ -31609,8 +31933,8 @@
       {
         "term": "桃園",
         "lang": "zh",
-        "last_seen": "2026-05-03",
-        "score": 26
+        "last_seen": "2026-05-06",
+        "score": 28
       },
       {
         "term": "桃色",
@@ -31813,8 +32137,8 @@
       {
         "term": "母親",
         "lang": "zh",
-        "last_seen": "2026-05-03",
-        "score": 20
+        "last_seen": "2026-05-06",
+        "score": 24
       },
       {
         "term": "毒品",
@@ -32071,8 +32395,8 @@
       {
         "term": "派出所",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 11
+        "last_seen": "2026-05-06",
+        "score": 13
       },
       {
         "term": "流浪",
@@ -32083,14 +32407,20 @@
       {
         "term": "浏阳",
         "lang": "zh",
-        "last_seen": "2026-05-04",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "浴佛",
         "lang": "zh",
         "last_seen": "2026-04-26",
         "score": 3
+      },
+      {
+        "term": "浴室",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "海丁",
@@ -32131,8 +32461,8 @@
       {
         "term": "消防",
         "lang": "zh",
-        "last_seen": "2026-05-04",
-        "score": 40
+        "last_seen": "2026-05-06",
+        "score": 43
       },
       {
         "term": "消防局",
@@ -32341,8 +32671,8 @@
       {
         "term": "烟花",
         "lang": "zh",
-        "last_seen": "2026-05-04",
-        "score": 3
+        "last_seen": "2026-05-06",
+        "score": 5
       },
       {
         "term": "烤肉",
@@ -32455,8 +32785,8 @@
       {
         "term": "爸爸",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 8
+        "last_seen": "2026-05-06",
+        "score": 10
       },
       {
         "term": "爽身粉",
@@ -32613,6 +32943,12 @@
         "lang": "zh",
         "last_seen": "2026-05-03",
         "score": 4
+      },
+      {
+        "term": "珍珠",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "班導師",
@@ -32947,8 +33283,8 @@
       {
         "term": "目擊者",
         "lang": "zh",
-        "last_seen": "2026-04-18",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "目錄",
@@ -33109,8 +33445,8 @@
       {
         "term": "秋千",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 5
+        "last_seen": "2026-05-06",
+        "score": 11
       },
       {
         "term": "秋田",
@@ -33349,8 +33685,8 @@
       {
         "term": "網友",
         "lang": "zh",
-        "last_seen": "2026-05-05",
-        "score": 65
+        "last_seen": "2026-05-06",
+        "score": 69
       },
       {
         "term": "網民",
@@ -34247,6 +34583,12 @@
         "score": 3
       },
       {
+        "term": "譚艾珍",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 3
+      },
+      {
         "term": "警告",
         "lang": "zh",
         "last_seen": "2026-04-22",
@@ -34279,8 +34621,14 @@
       {
         "term": "警方",
         "lang": "zh",
-        "last_seen": "2026-05-03",
-        "score": 108
+        "last_seen": "2026-05-06",
+        "score": 110
+      },
+      {
+        "term": "護欄",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "護病",
@@ -34507,8 +34855,8 @@
       {
         "term": "車禍",
         "lang": "zh",
-        "last_seen": "2026-05-02",
-        "score": 10
+        "last_seen": "2026-05-06",
+        "score": 14
       },
       {
         "term": "車站",
@@ -34721,6 +35069,12 @@
         "score": 2
       },
       {
+        "term": "邪教",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "邱于軒",
         "lang": "zh",
         "last_seen": "2026-04-23",
@@ -34795,8 +35149,8 @@
       {
         "term": "醫師",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 15
+        "last_seen": "2026-05-06",
+        "score": 18
       },
       {
         "term": "醫療",
@@ -34807,8 +35161,8 @@
       {
         "term": "醫院",
         "lang": "zh",
-        "last_seen": "2026-04-28",
-        "score": 4
+        "last_seen": "2026-05-06",
+        "score": 6
       },
       {
         "term": "重刑",
@@ -35069,6 +35423,12 @@
         "score": 2
       },
       {
+        "term": "院長",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "院长",
         "lang": "zh",
         "last_seen": "2026-04-18",
@@ -35091,6 +35451,12 @@
         "lang": "zh",
         "last_seen": "2026-04-29",
         "score": 3
+      },
+      {
+        "term": "陳屍",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "陳政谷",
@@ -35858,6 +36224,12 @@
         "term": "고등학교",
         "lang": "ko",
         "last_seen": "2026-04-18",
+        "score": 2
+      },
+      {
+        "term": "고생",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -36845,6 +37217,12 @@
         "score": 2
       },
       {
+        "term": "신입",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "신청",
         "lang": "ko",
         "last_seen": "2026-04-23",
@@ -37105,8 +37483,8 @@
       {
         "term": "용의자",
         "lang": "ko",
-        "last_seen": "2026-05-05",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 8
       },
       {
         "term": "우려",
@@ -37925,6 +38303,12 @@
         "score": 2
       },
       {
+        "term": "한인",
+        "lang": "ko",
+        "last_seen": "2026-05-06",
+        "score": 4
+      },
+      {
         "term": "합의",
         "lang": "ko",
         "last_seen": "2026-04-28",
@@ -38169,8 +38553,8 @@
       {
         "term": "Atlético Madrid",
         "lang": "fr",
-        "last_seen": "2026-04-29",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 4
       },
       {
         "term": "Atp Monaco",
@@ -39457,6 +39841,12 @@
         "score": 4
       },
       {
+        "term": "Sergen Yalçın",
+        "lang": "tr",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
         "term": "Sergio Bueno",
         "lang": "es",
         "last_seen": "2026-04-18",
@@ -39927,8 +40317,8 @@
       {
         "term": "آرسنال",
         "lang": "ar",
-        "last_seen": "2026-04-18",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 4
       },
       {
         "term": "آسيا",
@@ -39939,8 +40329,8 @@
       {
         "term": "أبطال",
         "lang": "ar",
-        "last_seen": "2026-04-29",
-        "score": 11
+        "last_seen": "2026-05-05",
+        "score": 13
       },
       {
         "term": "أتالانتا",
@@ -39963,8 +40353,8 @@
       {
         "term": "أرسنال",
         "lang": "ar",
-        "last_seen": "2026-05-04",
-        "score": 2
+        "last_seen": "2026-05-06",
+        "score": 4
       },
       {
         "term": "أستون",
@@ -39993,8 +40383,8 @@
       {
         "term": "أوروبا",
         "lang": "ar",
-        "last_seen": "2026-04-29",
-        "score": 4
+        "last_seen": "2026-05-05",
+        "score": 6
       },
       {
         "term": "أول",
@@ -40137,8 +40527,8 @@
       {
         "term": "الدوري",
         "lang": "ar",
-        "last_seen": "2026-05-03",
-        "score": 23
+        "last_seen": "2026-05-05",
+        "score": 25
       },
       {
         "term": "الزمالك",
@@ -40155,8 +40545,8 @@
       {
         "term": "السعودي",
         "lang": "ar",
-        "last_seen": "2026-05-03",
-        "score": 7
+        "last_seen": "2026-05-06",
+        "score": 12
       },
       {
         "term": "الصفاقسي",
@@ -40305,8 +40695,8 @@
       {
         "term": "ترتيب",
         "lang": "ar",
-        "last_seen": "2026-05-03",
-        "score": 8
+        "last_seen": "2026-05-05",
+        "score": 10
       },
       {
         "term": "تردد",
@@ -40383,8 +40773,8 @@
       {
         "term": "دوري",
         "lang": "ar",
-        "last_seen": "2026-04-29",
-        "score": 9
+        "last_seen": "2026-05-05",
+        "score": 12
       },
       {
         "term": "روما",
@@ -40647,8 +41037,8 @@
       {
         "term": "مباراة",
         "lang": "ar",
-        "last_seen": "2026-04-18",
-        "score": 9
+        "last_seen": "2026-05-05",
+        "score": 11
       },
       {
         "term": "مباراه",
@@ -40677,8 +41067,8 @@
       {
         "term": "مدريد",
         "lang": "ar",
-        "last_seen": "2026-05-03",
-        "score": 13
+        "last_seen": "2026-05-05",
+        "score": 16
       },
       {
         "term": "من",
@@ -41461,6 +41851,12 @@
         "score": 3
       },
       {
+        "term": "半决赛",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "南京",
         "lang": "zh",
         "last_seen": "2026-04-19",
@@ -41518,7 +41914,7 @@
         "term": "吴宜泽",
         "lang": "zh",
         "last_seen": "2026-05-05",
-        "score": 33
+        "score": 35
       },
       {
         "term": "味全",
@@ -41821,6 +42217,12 @@
         "score": 9
       },
       {
+        "term": "战队",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
+      },
+      {
         "term": "戰神",
         "lang": "zh",
         "last_seen": "2026-04-26",
@@ -42021,8 +42423,8 @@
       {
         "term": "欧冠",
         "lang": "zh",
-        "last_seen": "2026-04-30",
-        "score": 6
+        "last_seen": "2026-05-06",
+        "score": 9
       },
       {
         "term": "武術",
@@ -42245,6 +42647,12 @@
         "lang": "ja",
         "last_seen": "2026-04-18",
         "score": 3
+      },
+      {
+        "term": "竞技",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 2
       },
       {
         "term": "篮球",
@@ -42553,6 +42961,12 @@
         "score": 7
       },
       {
+        "term": "阿森纳",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
+        "score": 4
+      },
+      {
         "term": "院校",
         "lang": "zh",
         "last_seen": "2026-04-21",
@@ -42598,6 +43012,12 @@
         "term": "騎兵",
         "lang": "zh",
         "last_seen": "2026-05-04",
+        "score": 2
+      },
+      {
+        "term": "马德里",
+        "lang": "zh",
+        "last_seen": "2026-05-06",
         "score": 2
       },
       {
@@ -44690,7 +45110,7 @@
         "term": "선박",
         "lang": "ko",
         "last_seen": "2026-05-05",
-        "score": 4
+        "score": 6
       },
       {
         "term": "선박서",
@@ -44729,6 +45149,12 @@
         "score": 2
       },
       {
+        "term": "통과",
+        "lang": "ko",
+        "last_seen": "2026-05-05",
+        "score": 2
+      },
+      {
         "term": "폭발",
         "lang": "ko",
         "last_seen": "2026-05-04",
@@ -44755,14 +45181,14 @@
       {
         "term": "해협",
         "lang": "ko",
-        "last_seen": "2026-04-19",
-        "score": 2
+        "last_seen": "2026-05-05",
+        "score": 5
       },
       {
         "term": "호르무즈",
         "lang": "ko",
         "last_seen": "2026-05-05",
-        "score": 9
+        "score": 14
       },
       {
         "term": "홍해",
