@@ -179,6 +179,18 @@
       "name": "Ukraine",
       "default_locale": "uk-UA",
       "enabled": true
+    },
+    {
+      "key": "tw",
+      "name": "Taiwan",
+      "default_locale": "zh-Hant",
+      "enabled": true
+    },
+    {
+      "key": "hk",
+      "name": "Hong Kong",
+      "default_locale": "zh-Hant",
+      "enabled": true
     }
   ],
   "surfaces": [
@@ -4009,6 +4021,74 @@
       "config_json": {
         "subreddit": "ethereum",
         "limit": 50
+      }
+    },
+    {
+      "region": "tw",
+      "key": "chinatimes_news",
+      "platform": "chinatimes",
+      "surface_type": "html_scraper",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.chinatimes_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "url": "https://www.chinatimes.com/realtimenews/?chdtv",
+        "locale": "zh-Hant",
+        "source_name": "chinatimes"
+      }
+    },
+    {
+      "region": "tw",
+      "key": "mirrormedia_news",
+      "platform": "mirrormedia",
+      "surface_type": "html_scraper",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.mirrormedia_news:collect",
+      "enabled": false,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "url": "https://www.mirrormedia.mg/category/news",
+        "locale": "zh-Hant",
+        "source_name": "mirrormedia_news"
+      }
+    },
+    {
+      "region": "tw",
+      "key": "ettoday_rss",
+      "platform": "ettoday",
+      "surface_type": "rss_feed",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.generic_rss:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "feed_urls": ["https://feeds.feedburner.com/ettoday/realtime"],
+        "locale": "zh-Hant",
+        "source_name": "ettoday"
+      }
+    },
+    {
+      "region": "hk",
+      "key": "hk01_news",
+      "platform": "hk01",
+      "surface_type": "html_scraper",
+      "bucket": "news",
+      "bucket_weight": 1.0,
+      "entrypoint": "crawler_api.surfaces.hk01_news:collect",
+      "enabled": true,
+      "poll_interval_seconds": 1800,
+      "max_items_per_run": 50,
+      "config_json": {
+        "urls": ["https://www.hk01.com/channel/2"],
+        "locale": "zh-Hant",
+        "source_name": "hk01_news"
       }
     }
   ],

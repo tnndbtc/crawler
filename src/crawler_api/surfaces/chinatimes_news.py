@@ -19,7 +19,7 @@ Notes:
 - Uses a mobile User-Agent + Referer to match typical browser behaviour.
 - Article URLs follow pattern: /realtimenews/YYYYMMDDNNNNNN-NNNNNN
 - Date is embedded in the article URL — used as published_at.
-- Locale: zh-Hant  |  Region: cn (Taiwan; tw region not yet in DB)  |  Bucket: news
+- Locale: zh-Hant  |  Region: tw  |  Bucket: news
 """
 
 import logging

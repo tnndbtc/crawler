@@ -20,7 +20,7 @@ Key selector insight (validated 2026-04-11):
     which also use /story/ but have non-date slugs (webauthorize, ad1018001, etc.)
   - Filter: slug must start with 8 digits (date)
 
-Locale: zh-Hant  |  Region: cn (96, closest; tw not yet in DB)  |  Bucket: news
+Locale: zh-Hant  |  Region: tw  |  Bucket: news
 """
 
 import logging

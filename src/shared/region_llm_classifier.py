@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 VALID_REGIONS = {
     'us', 'cn', 'jp', 'kr', 'de', 'fr', 'br', 'es', 'ru', 'in',
     'it', 'tr', 'ar', 'id', 'pl', 'nl', 'se', 'ph', 'vn', 'th',
-    'my', 'pt', 'ar_latam',
+    'my', 'pt', 'ar_latam', 'tw', 'hk',
 }
 
 BATCH_SIZE = 20
@@ -51,7 +51,7 @@ ABOUT. An article can be about multiple regions (e.g., "US-China trade war"
 is about both US and China).
 
 Use these codes: us, cn, jp, kr, de, fr, br, es, ru, in, it, tr,
-ar, id, pl, nl, se, ph, vn, th, my, pt, ar_latam
+ar, id, pl, nl, se, ph, vn, th, my, pt, ar_latam, tw, hk
 Use "none" if no specific region. Use "none" if unclear.
 
 Items:

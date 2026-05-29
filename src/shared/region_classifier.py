@@ -31,6 +31,10 @@ LANG_PLATFORM_MAP = {
     ('zh', 'weibo'): 'cn',
     ('zh', 'zhihu'): 'cn',
     ('zh', 'v2ex'): 'cn',
+    ('zh', 'chinatimes'): 'tw',
+    ('zh', 'mirrormedia'): 'tw',
+    ('zh', 'ettoday'): 'tw',
+    ('zh', 'hk01'): 'hk',
 }
 
 # Also match by platform alone for RSS feeds with lang_group
@@ -115,6 +119,10 @@ RSS_SURFACE_MAP = {
     'nhk_news_rss': 'jp',
     # China
     '36kr_rss': 'cn', 'netease_news_rss': 'cn',
+    # Taiwan
+    'chinatimes_news': 'tw', 'mirrormedia_news': 'tw', 'ettoday_rss': 'tw',
+    # Hong Kong
+    'hk01_news': 'hk',
     # Others
     'nunl_rss': 'nl',
     'sweden_news_rss': 'se',
@@ -184,6 +192,9 @@ KEYWORD_MAP = {
     'my': ['Malaysia', 'Kuala Lumpur', 'Anwar', 'Malaysian'],
     'pt': ['Portugal', 'Lisboa', 'Lisbon', 'Porto', 'Portuguese'],
     'ar_latam': ['Argentina', 'Buenos Aires', 'Milei', 'Argentino', 'Argentine'],
+    'tw': ['台灣', '台北', '台中', '高雄', '新北', '桃園', '台南', 'Taiwan', 'Taipei',
+           'Kaohsiung', 'Taichung', 'Tainan'],
+    'hk': ['香港', '九龍', '新界', 'Hong Kong', 'Hongkong', 'HK', 'Kowloon'],
 }
 
 # Pre-compile case-insensitive patterns

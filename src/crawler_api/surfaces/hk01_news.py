@@ -20,7 +20,7 @@ Key selector insight (validated 2026-04-11):
   - Filter:  re.search(r'/\\d{7,}/', href)
   - NOT /article/ — those are a different content type
 
-Locale: zh-Hant  |  Region: cn (96, closest; tw not yet in DB)  |  Bucket: news
+Locale: zh-Hant  |  Region: hk  |  Bucket: news
 """
 
 import logging
