@@ -72,7 +72,11 @@ CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
     #   --system-prompt           replaces multi-KB default with one-liner
     #   --disable-slash-commands  skips loading every skill manifest
     #   --tools ""                drops all tool schemas (pure text in/out)
-    #   --setting-sources user    skips project CLAUDE.md walk
+    #   --setting-sources ''      skips ALL settings discovery, including
+    #                             user-level ~/.claude/CLAUDE.md/settings.json.
+    #                             Measured 2026-08-06: 'user' cost 2386 input
+    #                             tokens/call vs 755 with '' (same prompt
+    #                             shape as topic_llm_classifier.py).
     #   --no-session-persistence  no session file writes for one-shot
     # Same pattern as topic_llm_classifier.py (commit 7163c925).
     try:
@@ -85,7 +89,7 @@ CRITICAL: Return exactly {len(batch)} entries. Each entry MUST be a list."""
                 'region-code lists. No prose, no markdown, no explanation.',
                 '--disable-slash-commands',
                 '--tools', '',
-                '--setting-sources', 'user',
+                '--setting-sources', '',
                 '--no-session-persistence',
                 '--output-format', 'text',
             ],

@@ -169,15 +169,19 @@ CRITICAL: Return exactly {len(batch)} entries."""
         #   --disable-slash-commands  skips loading every skill manifest
         #   --tools ""                drops all tool schemas (classifier
         #                             needs no tools — pure text in/out)
-        #   --setting-sources user    skips project/local settings discovery
-        #                             (no project CLAUDE.md walk)
+        #   --setting-sources ''      skips ALL settings discovery, including
+        #                             user-level ~/.claude/CLAUDE.md and
+        #                             ~/.claude/settings.json. Measured
+        #                             2026-08-06: 'user' cost 2386 input
+        #                             tokens/call vs 755 with '' — 1631
+        #                             tokens/call of pure harness overhead
+        #                             for zero classification benefit.
         #   --no-session-persistence  do not write session files for one-shot
         #
         # NOTE: we cannot use --bare here because this host authenticates
         # via OAuth (Claude subscription), and --bare forces auth to
         # ANTHROPIC_API_KEY only. If/when an API key is provisioned, adding
-        # --bare gives a further reduction (skips hooks/plugins/CLAUDE.md
-        # auto-discovery entirely).
+        # --bare gives a further reduction (skips hooks/plugins entirely).
         #
         # NOTE on prompt caching: the Claude CLI runs as a one-shot
         # subprocess per call, so API-level prompt caching (cache_control)
@@ -193,7 +197,7 @@ CRITICAL: Return exactly {len(batch)} entries."""
                 'explanation.',
                 '--disable-slash-commands',
                 '--tools', '',
-                '--setting-sources', 'user',
+                '--setting-sources', '',
                 '--no-session-persistence',
                 '--output-format', 'text',
             ],

@@ -402,14 +402,23 @@ Return exactly {len(candidates)} entries."""
         result = subprocess.run(
             [
                 'claude', '-p',
-                '--model', 'sonnet',
+                # 2026-08-06: switched from 'sonnet' to 'haiku' — this is
+                # the same shape of task (assign 1-of-9 topic labels) as
+                # topic_llm_classifier.py / region_llm_classifier.py, both
+                # already on haiku with no measurable accuracy loss.
+                '--model', 'haiku',
                 '--system-prompt',
                 'You are a topic-label confirmer. Output ONLY a JSON array '
                 'of {"term": "...", "confirmed_topic": "..."} objects. No '
                 'prose, no markdown, no explanation.',
                 '--disable-slash-commands',
                 '--tools', '',
-                '--setting-sources', 'user',
+                # 2026-08-06: skip ALL settings discovery (including
+                # user-level ~/.claude/CLAUDE.md/settings.json), not just
+                # project/local. Measured: 'user' cost 2386 input
+                # tokens/call vs 755 with '' on an equivalent classification
+                # prompt — pure harness overhead with zero task benefit.
+                '--setting-sources', '',
                 '--no-session-persistence',
                 '--output-format', 'text',
             ],
